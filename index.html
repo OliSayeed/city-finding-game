@@ -292,7 +292,7 @@ function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) retu
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — ${fmtKm(totalErrorKm)}</span>`; }
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
