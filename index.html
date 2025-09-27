@@ -35,23 +35,22 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
-  /* Top bar (centered city + Confirm) */
+  /* Top bar: [left empty] [city centered] [Confirm on right] */
   .topbar {
     position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
     background: #0e1117; border-bottom: 1px solid var(--border);
-    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    display: grid; grid-template-columns: 1fr 1fr auto; align-items: center;
     padding: 10px 12px; gap: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.35);
   }
-  .spacer-left, .spacer-right { display:flex; align-items:center; gap:8px; }
-  .spacer-left { justify-content:flex-start; }
-  .spacer-right { justify-content:flex-end; }
+  .spacer-left { height: 100%; }
   .current-city {
     text-align: center; font-size: 22px; font-weight: 800; letter-spacing: .2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .current-city .cty { color: #fff; }
   .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
+  .topbar-right { display:flex; align-items:center; gap:8px; }
 
   .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
     background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
@@ -107,13 +106,13 @@
 </head>
 <body>
 
-<!-- Centered current-city bar -->
+<!-- Top bar -->
 <div class="topbar">
-  <div class="spacer-left">
+  <div class="spacer-left"></div>
+  <div class="current-city" id="currentCityTop"></div>
+  <div class="topbar-right">
     <button id="confirmBtn" class="btn accent" title="Confirm your current pin">Confirm</button>
   </div>
-  <div class="current-city" id="currentCityTop">City finding game</div>
-  <div class="spacer-right"></div>
 </div>
 
 <div class="app">
@@ -187,15 +186,16 @@
 <script>
 /* ========= Distance (km) ========= */
 function haversineKm(lat1,lon1,lat2,lon2){
-  const R=6371,toRad=d=>d*Math.PI/180;
-  const dLat=toRad(lat2-lat1),dLon=toRad(lat2-lon1);
-  return 2*R*Math.asin(Math.sqrt(Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2));
+  const R=6371, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
 }
 
 /* ========= Map ========= */
 const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
 const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
-const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''}); // transparent labels overlay
+const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
 map.setMaxBounds([[-85,-200],[85,200]]);
 
 /* ========= State ========= */
@@ -216,11 +216,7 @@ const currentCityTopEl=document.getElementById('currentCityTop');
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTop(cityObj){
-  if(!cityObj){
-    currentCityTopEl.textContent='City finding game';
-    return;
-  }
-  currentCityTopEl.innerHTML = `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}`;
+  currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : '';
 }
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
@@ -263,12 +259,12 @@ function clearMapLayers(){
     }
   });
   clearProvisional();
-  // Remove labels overlay between questions
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 }
 function resetRoundUI(){
   guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();
   clearProvisional();
+  setTop(null);
 }
 
 /* ========= Game flow ========= */
@@ -282,9 +278,9 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Shuffle with Fisher–Yates
+  // Fisher–Yates shuffle (correct swap)
   const idxs=[...pool.keys()];
-  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j]]=[idxs[i]]; }
+  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
   clearMapLayers(); resetRoundUI(); nextCity();
@@ -295,7 +291,7 @@ function nextCity(){
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 
   if(currentIndex>=roundCities.length){
-    currentCityTopEl.textContent='Round complete!';
+    setTop(null);
     renderSummary();
     return;
   }
@@ -343,20 +339,16 @@ async function confirmGuess(){
     weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
   }).addTo(map);
 
-  // Feedback: add labels overlay and zoom to the true city
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   map.setView([trueLat,trueLon], 8, { animate:true });
 
-  // Wikipedia panel
   openWikiPanel(c);
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Move on after panel interaction or next Confirm press for next city
-  // We'll advance to next city on next Confirm if the user hasn't moved the pin again.
-  // For clarity and control, let's advance immediately after showing feedback:
-  setTimeout(nextCity, 1200); // brief pause so they see the feedback
+  // Advance when they click the map again for the next guess (or press Start for a new round)
+  setTimeout(nextCity, 1200);
 }
 
 /* ========= Wikipedia panel ========= */
@@ -472,7 +464,7 @@ function loadCSV(url){
       const cities = parseRowsToCities(res.data);
       if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
       allCities = cities;
-      currentCityTopEl.textContent = 'City finding game';
+      setTop(null); // no placeholder; will show on Start
     },
     error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
@@ -490,7 +482,6 @@ window.addEventListener('DOMContentLoaded', boot);
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
   clearMapLayers(); resetRoundUI();
-  currentCityTopEl.textContent = 'City finding game';
   // Hide wiki + remove labels overlay
   wikiPanel.classList.remove('open');
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
