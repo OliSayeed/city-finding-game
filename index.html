@@ -79,7 +79,7 @@
 
   #map { height: calc(100vh - 56px); width: 100%; }
 
-  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scorebox { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; } /* 2 cols now */
   .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
   .scorecard .big { font-size: 22px; font-weight: 700; }
 
@@ -154,7 +154,7 @@
         </div>
       </div>
 
-      <div class="btnbar" style="margin-top:10px;">
+      <div class="btnbar" style="margin-top:10px%;">
         <button id="startBtn" class="btn accent">Start new round</button>
         <button id="resetBtn" class="btn">Clear map</button>
       </div>
@@ -178,7 +178,6 @@
       <div class="scorebox" style="margin-bottom:10px;">
         <div class="scorecard"><div class="muted">Guessed</div><div id="guessedCount" class="big">0</div></div>
         <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
-        <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
       </div>
       <!-- Empty area kept intentionally; results use top-center title instead. -->
       <div id="summary" style="display:none;"></div>
@@ -221,7 +220,6 @@ const wikiSide = document.getElementById('wikiSide');
 
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
-const totalErrorEl=document.getElementById('totalError');
 
 /* Feedback layers (only for current city) */
 let feedbackLayers = [];
@@ -229,61 +227,136 @@ let feedbackLayers = [];
 /* Results layers (entire round) */
 let resultLayers = [];
 
-/* ========= Wikipedia prefetch cache + robust fetch (redirects/diacritics) ========= */
+/* ========= Wikipedia cache + SMART selection ========= */
 const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
 
-function wikiCandidates(city){
-  const arr=[];
-  if(city.sub && city.country){ arr.push(`${city.name}, ${city.sub}, ${city.country}`); }
-  if(city.sub){ arr.push(`${city.name}, ${city.sub}`); }
-  if(city.country){ arr.push(`${city.name}, ${city.country}`); }
-  arr.push(city.name);
-  return arr;
+/* MediaWiki helper */
+async function mwApi(params){
+  const qs = new URLSearchParams({...params, format:'json', origin:'*'});
+  const url = `https://en.wikipedia.org/w/api.php?${qs.toString()}`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('Wikipedia API error');
+  return r.json();
 }
-async function fetchWikiSummary(title){
-  const slug = encodeURIComponent(title.replace(/\s+/g,'_'));
-  const try1 = `https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`;
-  try {
-    const r = await fetch(try1);
-    if (r.ok) {
-      const d = await r.json();
-      const img = (d.originalimage && d.originalimage.source) ? d.originalimage.source
-                : (d.thumbnail && d.thumbnail.source) ? d.thumbnail.source : null;
-      const page = d.content_urls?.desktop?.page || null;
-      return { title: d.title || title, extract: d.extract || 'No summary available.', imgSrc: img, pageUrl: page };
-    }
-  } catch(e){}
-  // Fallback: search API then summary of first result
+function titleCandidates(city){
+  const arr=[];
+  if(city.sub && city.country) arr.push(`${city.name}, ${city.sub}, ${city.country}`);
+  if(city.sub)                 arr.push(`${city.name}, ${city.sub}`);
+  if(city.country)             arr.push(`${city.name}, ${city.country}`);
+  arr.push(city.name);
+  // Prefer intitle: constraints to avoid “Minsk agreements”, regions, etc.
+  return arr.map(t => `intitle:"${t}"`);
+}
+function titleScore(cityName, title){
+  const n = cityName.toLowerCase();
+  const t = (title||'').toLowerCase();
+  if(t === n) return 100;                         // exact
+  if(t.startsWith(n+',') || t.startsWith(n+' ')) return 90; // "Minsk, ..." / "Minsk ..."
+  if(t.includes(` (${n})`)) return 80;
+  if(t.includes(n)) return 60;
+  return 0;
+}
+function typeScore(desc=''){
+  const d = desc.toLowerCase();
+  if(d.includes('capital city')) return 50;
+  if(d.includes('city')) return 45;
+  if(d.includes('town')) return 40;
+  if(d.includes('municipality')) return 35;
+  if(d.includes('settlement')) return 25;
+  if(d.includes('district') || d.includes('province') || d.includes('regency') || d.includes('agreement')) return -20;
+  return 0;
+}
+function distKm(aLat,aLon,bLat,bLon){
+  const R=6371, toRad=x=>x*Math.PI/180, dLat=toRad(bLat-aLat), dLon=toRad(bLon-aLon);
+  const A=Math.sin(dLat/2)**2 + Math.cos(toRad(aLat))*Math.cos(toRad(bLat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(A));
+}
+async function chooseBestWiki(city){
+  const lat = city.lat, lon = city.lon;
+
+  // 1) Pages near the coords
+  let geoTitles = [];
   try{
-    const s = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`);
-    const sj = await s.json();
-    const first = sj?.query?.search?.[0]?.title;
-    if(first){
-      const slug2 = encodeURIComponent(first.replace(/\s+/g,'_'));
-      const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug2}?redirect=true`);
-      if(r2.ok){
-        const d2 = await r2.json();
-        const img2 = (d2.originalimage && d2.originalimage.source) ? d2.originalimage.source
-                  : (d2.thumbnail && d2.thumbnail.source) ? d2.thumbnail.source : null;
-        const page2 = d2.content_urls?.desktop?.page || null;
-        return { title: d2.title || first, extract: d2.extract || 'No summary available.', imgSrc: img2, pageUrl: page2 };
-      }
+    const geo = await mwApi({ action:'query', list:'geosearch', gscoord:`${lat}|${lon}`, gsradius:30000, gslimit:20, gsprop:'type' });
+    geoTitles = (geo.query?.geosearch || []).map(g => g.title);
+  }catch(e){}
+
+  // 2) Name-based searches (intitle:)
+  const searchTitles = new Set();
+  for(const q of titleCandidates(city)){
+    try{
+      const s = await mwApi({ action:'query', list:'search', srsearch:q, srlimit:10, srprop:'' });
+      (s.query?.search || []).forEach(x => searchTitles.add(x.title));
+    }catch(e){}
+  }
+
+  const titles = Array.from(new Set([...geoTitles, ...searchTitles])).slice(0,40);
+  if(!titles.length){
+    return { title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null };
+  }
+
+  // 3) Fetch coordinates/description/images in one go
+  let pages = [];
+  try{
+    const info = await mwApi({
+      action:'query',
+      prop:'coordinates|description|pageimages|info',
+      piprop:'thumbnail|original', pithumbsize:640,
+      inprop:'url',
+      titles: titles.join('|')
+    });
+    pages = Object.values(info.query?.pages || {});
+  }catch(e){}
+
+  // 4) Score and pick
+  let best = null, bestScore = -Infinity;
+  for(const p of pages){
+    const pTitle = p.title || '';
+    const pDesc  = p.description || '';
+    const c = Array.isArray(p.coordinates) ? p.coordinates[0] : null;
+    const dKm = c ? distKm(lat, lon, c.lat, c.lon) : 1e9;
+
+    const score = titleScore(city.name, pTitle) + typeScore(pDesc) + Math.max(0, 30 - Math.min(30, dKm));
+    if(score > bestScore){ bestScore = score; best = p; }
+  }
+  if(!best){
+    return { title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null };
+  }
+
+  // 5) Get the polished REST summary (handles redirects, better extract/img)
+  try{
+    const slug = encodeURIComponent(best.title.replace(/\s+/g,'_'));
+    const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`);
+    if(r.ok){
+      const d = await r.json();
+      return {
+        title: d.title || best.title,
+        extract: d.extract || best.description || 'No summary available.',
+        imgSrc: d.originalimage?.source || d.thumbnail?.source || null,
+        pageUrl: d.content_urls?.desktop?.page || best.fullurl || null
+      };
     }
   }catch(e){}
-  return { title, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null };
+  // Fallback to whatever we already have
+  return {
+    title: best.title,
+    extract: best.description || 'No summary available.',
+    imgSrc: (best.original && best.original.source) || (best.thumbnail && best.thumbnail.source) || null,
+    pageUrl: best.fullurl || null
+  };
 }
+
+/* Prefetch (populate cache with smart pick) */
 async function prefetchWiki(city){
   const key = cityKey(city);
   if(wikiCache.has(key)) return;
-  for(const t of wikiCandidates(city)){
-    const info = await fetchWikiSummary(t);
-    if(info && info.extract && info.extract.length){
-      wikiCache.set(key, info);
-      return;
-    }
+  try{
+    const info = await chooseBestWiki(city);
+    wikiCache.set(key, info);
+  }catch(e){
+    wikiCache.set(key, {title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null});
   }
-  wikiCache.set(key, {title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null});
 }
 
 /* ========= UI helpers ========= */
@@ -291,11 +364,10 @@ function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) retu
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; } /* total error removed */
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
-  totalErrorEl.textContent=fmtKm(totalErrorKm);
 }
 
 /* ========= Sidebar visibility ========= */
@@ -407,7 +479,7 @@ function nextCity(){
   const city = roundCities[currentIndex];
   setTopCity(city);
   updateScoreBox();
-  prefetchWiki(city);
+  prefetchWiki(city); // fills cache using smart selector
 }
 
 /* ========= Confirm / Next / Results / Restart ========= */
@@ -484,14 +556,13 @@ function populateWikiFromCache(city){
 }
 
 /* ========= Results view ========= */
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
 function showRoundResults(){
   hideFeedbackUI();
   clearFeedbackLayers(); // remove current city's overlays
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
   fitToAllGuesses();
-  setTopRoundSummary();
+  setTopRoundSummary(); // now just "Round summary"
   actionMode = 'restart';
   confirmBtn.textContent = 'Start new round';
 }
@@ -522,7 +593,6 @@ function extractSubdivision(row){
   if(labelEn){
     const parts = labelEn.split(',').map(s=>s.trim()).filter(Boolean);
     if(parts.length >= 3){
-      const last = parts[parts.length-1];
       const penultimate = parts[parts.length-2];
       return penultimate || null;
     }
