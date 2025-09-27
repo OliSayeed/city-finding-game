@@ -225,6 +225,7 @@ const totalErrorEl=document.getElementById('totalError');
 
 /* Feedback layers (only for current city) */
 let feedbackLayers = [];
+let animMarker = null;
 
 /* Results layers (entire round) */
 let resultLayers = [];
@@ -314,11 +315,12 @@ function resetMapView(){
   clearFeedbackLayers();
   if(provisional && provisional.marker){ map.removeLayer(provisional.marker); }
   provisional = null;
-  map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
+  map.flyTo(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true, duration: 0.9});
 }
 function clearFeedbackLayers(){
   feedbackLayers.forEach(l => map.removeLayer(l));
   feedbackLayers = [];
+  if(animMarker){ map.removeLayer(animMarker); animMarker = null; }
 }
 function fitToAllGuesses(){
   const pts=[];
@@ -327,7 +329,7 @@ function fitToAllGuesses(){
   });
   if(pts.length){
     const bounds = L.latLngBounds(pts);
-    map.fitBounds(bounds.pad(0.2));
+    map.flyToBounds(bounds.pad(0.2), {animate:true, duration:1.2});
   }else{
     resetMapView();
   }
@@ -417,6 +419,52 @@ async function confirmOrNext(){
   if(actionMode==='restart'){ startRound(); return; }
   await confirmGuess();
 }
+
+/* ====== Smooth fly + animated line from guess to true ====== */
+function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function lerpLatLng(a,b,t){ return [ lerp(a[0],b[0],t), lerp(a[1],b[1],t) ]; }
+
+async function smoothReveal(guess, truth){
+  // Step 1: ensure both points are visible (if needed)
+  const bounds = L.latLngBounds([guess, truth]).pad(0.25);
+  const bothVisible = map.getBounds().contains(guess) && map.getBounds().contains(truth);
+  if(!bothVisible){
+    await new Promise(res=>{
+      map.flyToBounds(bounds, {animate:true, duration: 0.9, padding: [80,80]});
+      map.once('moveend', res);
+    });
+  }
+
+  // Step 2: fly to true location while animating the line head
+  const duration = 1200; // ms
+  const start = performance.now();
+  const startZoom = map.getZoom();
+  const targetZoom = 9;
+
+  // Kick off camera
+  map.flyTo(truth, targetZoom, {animate:true, duration: duration/1000});
+
+  // Animate line head dot + polyline growth
+  return new Promise(res=>{
+    function step(ts){
+      const t = Math.min(1, (ts - start)/duration);
+      const e = easeInOutCubic(t);
+      const cur = lerpLatLng(guess, truth, e);
+      animMarker.setLatLng(cur);
+      animatedLine.setLatLngs([guess, cur]);
+      if(t<1){ requestAnimationFrame(step); }
+      else {
+        animatedLine.setLatLngs([guess, truth]);
+        res();
+      }
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+let animatedLine = null;
+
 async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
@@ -430,28 +478,38 @@ async function confirmGuess(){
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // --- FEEDBACK VIEW: draw current city's layers + zoom in + labels ---
+  // Build feedback layers: static markers + animated head + growing line
   if(provisional.marker){ map.removeLayer(provisional.marker); }
-  const guessMarker=L.circleMarker([guessLat,guessLon],{
+  const guessPt = [guessLat, guessLon];
+  const truePt  = [trueLat, trueLon];
+
+  const guessMarker=L.circleMarker(guessPt,{
     radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
   }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
 
-  const trueMarker=L.circleMarker([trueLat,trueLon],{
+  const trueMarker=L.circleMarker(truePt,{
     radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
   }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
 
-  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{
-    weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
+  animatedLine = L.polyline([guessPt, guessPt],{
+    weight:2.5, color:'#f59e0b', opacity:.95, dashArray:'4,4'
   }).addTo(map);
 
-  feedbackLayers.push(guessMarker,trueMarker,line);
+  animMarker = L.circleMarker(guessPt,{
+    radius:4.5, weight:2, color:'#f59e0b', fillColor:'#f59e0b', fillOpacity:0.9
+  }).addTo(map);
+
+  feedbackLayers.push(guessMarker,trueMarker,animatedLine,animMarker);
+
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
-  map.setView([trueLat,trueLon], 9, { animate:true });
 
   // Sidebar + title feedback
   setTopDistance(dKm);
   showFeedbackUI();
   populateWikiFromCache(c);
+
+  // Smooth reveal (fit both if needed, then fly + animate line)
+  await smoothReveal(guessPt, truePt);
 
   // Button state: Next city or See results if last
   const isLast = (currentIndex === roundCities.length - 1);
@@ -484,7 +542,6 @@ function populateWikiFromCache(city){
 }
 
 /* ========= Results view ========= */
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
 function showRoundResults(){
   hideFeedbackUI();
   clearFeedbackLayers(); // remove current city's overlays
@@ -522,7 +579,6 @@ function extractSubdivision(row){
   if(labelEn){
     const parts = labelEn.split(',').map(s=>s.trim()).filter(Boolean);
     if(parts.length >= 3){
-      const last = parts[parts.length-1];
       const penultimate = parts[parts.length-2];
       return penultimate || null;
     }
