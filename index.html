@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>City Guessing Map — City + Subdivision (no country)</title>
+<title>City Guessing Map — City + Subdivision</title>
 
 <!-- Leaflet -->
 <link
@@ -35,7 +35,7 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
-  /* Top bar (prominent current city) */
+  /* Top bar (prominent current city + Confirm) */
   .topbar {
     position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
     background: #0e1117; border-bottom: 1px solid var(--border);
@@ -49,7 +49,16 @@
   }
   .current-city .cty { color: #fff; }
   .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
-  .minihints { font-size: 12px; color: var(--muted); }
+  .topbar-right { display: flex; gap: 8px; align-items: center; }
+  .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
+    background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
+    font-weight: 600; letter-spacing: .2px; }
+  .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
+  .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
+  .pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 6px 10px; border-radius: 999px;
+    background: #121722; border: 1px solid var(--border); color: var(--muted); }
+  .pill .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+  .pill .dot.guess { background: var(--accent); } .pill .dot.true { background: var(--good); } .pill .dot.line { background: var(--mid); }
 
   /* Two-column layout below the topbar */
   .app {
@@ -64,25 +73,12 @@
   .muted { color: var(--muted); font-size: 13px; }
   .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
   .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .controls input[type="number"], .controls input[type="text"], .controls select {
+  .controls input[type="number"] {
     width: 100%; padding: 10px 12px; background: #0d0f13; border: 1px solid var(--border);
     border-radius: 10px; color: var(--text);
   }
-  .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
-    background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
-    font-weight: 600; letter-spacing: .2px; }
-  .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
-  .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
-  .btn.ghost { background: transparent; border: 1px solid var(--border); }
-  .btn.small { padding: 7px 10px; font-weight: 500; }
   .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
-
   #map { height: calc(100vh - 60px); width: 100%; }
-
-  .pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 6px 10px; border-radius: 999px;
-    background: #121722; border: 1px solid var(--border); color: var(--muted); }
-  .pill .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
-  .pill .dot.guess { background: var(--accent); } .pill .dot.true { background: var(--good); } .pill .dot.line { background: var(--mid); }
 
   .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
@@ -109,18 +105,18 @@
 
 <!-- Prominent current-city bar -->
 <div class="topbar">
-  <div class="current-city" id="currentCityTop">No round yet.</div>
-  <div class="minihints">Click the map to guess · Label-free basemap</div>
+  <div class="current-city" id="currentCityTop">Loading cities…</div>
+  <div class="topbar-right">
+    <button id="confirmBtn" class="btn accent" title="Confirm your current pin for this city">Confirm</button>
+    <span class="pill"><span class="dot guess"></span>&nbsp;Your pin</span>
+  </div>
 </div>
 
 <div class="app">
   <aside class="sidebar">
     <div class="section">
       <h1>City Guessing Map</h1>
-      <div class="muted">
-        Auto-loads <code>geonames_10k_plus.csv</code> and <code>admin1CodesASCII.txt</code> from this repo.
-        We show <em>City — Subdivision</em> (no country). Choose a difficulty, start a round, then click the label-free map.
-      </div>
+      <div class="muted">We preload a big list of cities (≥10k pop). Click the map to drop a pin for the city shown at the top, then hit <b>Confirm</b>.</div>
     </div>
 
     <div class="section controls">
@@ -151,25 +147,15 @@
           <input id="numPerRound" type="number" min="1" max="200" step="1" value="10" />
         </div>
         <div>
-          <label>Seed (optional)</label>
-          <input id="seedInput" type="text" placeholder="e.g. 42" />
-        </div>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <div>
-          <label class="radio-item"><input id="lockPan" type="checkbox" /> Lock to world view</label>
-        </div>
-        <div>
           <label class="radio-item"><input id="hideTrueUntilEnd" type="checkbox" checked /> Hide true locations until end</label>
         </div>
       </div>
+
       <div class="btnbar" style="margin-top:10px;">
         <button id="startBtn" class="btn accent">Start New Round</button>
-        <button id="undoBtn" class="btn ghost">Undo Last Guess</button>
-        <button id="resetBtn" class="btn ghost">Clear Map</button>
+        <button id="resetBtn" class="btn">Clear Map</button>
       </div>
-      <div class="pill" style="margin-top:10px;"><span class="dot guess"></span>&nbsp;Your guess &nbsp;&nbsp; <span class="dot true"></span>&nbsp;True location &nbsp;&nbsp; <span class="dot line"></span>&nbsp;Error (km)</div>
-      <div class="muted" style="margin-top:8px;">Tiles: Carto <em>Positron No Labels</em>. Distances are great-circle.</div>
+      <div class="muted" style="margin-top:8px;">Basemap has no labels. Distances are great-circle.</div>
     </div>
 
     <div class="section">
@@ -189,12 +175,15 @@
 </div>
 
 <script>
-/* ========= Seeded RNG ========= */
-function xmur3(str){let h=1779033703^str.length;for(let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=(h<<13)|(h>>>19);}return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);h^=h>>>16;return h>>>0;};}
-function mulberry32(a){return function(){let t=(a+=0x6D2B79F5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
+/* ========= Seedless RNG (we just use Math.random) ========= */
 
 /* ========= Distance (km) ========= */
-function haversineKm(lat1,lon1,lat2,lon2){const R=6371,toRad=d=>d*Math.PI/180;const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371,toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
 
 /* ========= Map ========= */
 const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
@@ -202,10 +191,12 @@ L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{a
 map.setMaxBounds([[-85,-200],[85,200]]);
 
 /* ========= State ========= */
-let adminMap = {}; // key: "CC.Admin1Code" -> Subdivision Name
-let allCities=[];   // normalized [{name, lat, lon, pop, sub}]
-let roundCities=[]; let currentIndex=-1; let rng=Math.random;
+let adminMap = {}; // "CC.Admin1Code" -> Subdivision name
+let allCities=[];   // [{name, lat, lon, pop, sub, cc, a1}]
+let roundCities=[]; let currentIndex=-1;
 let guesses=[]; let totalErrorKm=0; let hideTrueUntilEnd=true;
+
+let provisional = null; // {lat, lon, marker}
 
 const cityListEl=document.getElementById('cityList');
 const summaryEl=document.getElementById('summary');
@@ -215,40 +206,57 @@ const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 const currentCityTopEl=document.getElementById('currentCityTop');
 
-/* ========= UI helpers ========= */
-function fmtKm(km){if(km<1)return `${(km*1000).toFixed(0)} m`; if(km<100)return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
+function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
-function setPromptText(cityObj){
-  if(!cityObj){ currentPromptEl.textContent='No round yet.'; currentCityTopEl.textContent='No round yet.'; return; }
-  const label = cityLabel(cityObj);
-  currentPromptEl.textContent = `Click on the map for: ${label}`;
+
+function setTopAndPrompt(cityObj){
+  if(!cityObj){
+    currentCityTopEl.textContent='No round yet.';
+    currentPromptEl.textContent='No round yet.';
+    return;
+  }
   currentCityTopEl.innerHTML = `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}`;
+  currentPromptEl.textContent = `Click the map to place a pin for: ${cityLabel(cityObj)}. Then press Confirm.`;
 }
-function updateScoreBox(){guessedCountEl.textContent=guesses.length; remainingCountEl.textContent=Math.max(0,roundCities.length-guesses.length); totalErrorEl.textContent=fmtKm(totalErrorKm);}
+
+function updateScoreBox(){
+  guessedCountEl.textContent=guesses.length;
+  remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
+  totalErrorEl.textContent=fmtKm(totalErrorKm);
+}
+
 function renderCityList(){
   cityListEl.innerHTML='';
   roundCities.forEach((c,idx)=>{
     const div=document.createElement('div');
     div.className='cityitem'+(idx<guesses.length?' done':'');
     const lab = idx<guesses.length?'guessed':(idx===guesses.length?'current':'pending');
-    const popStr = c.pop!=null ? c.pop.toLocaleString?.() : '?';
+    const popStr = c.pop!=null ? (c.pop.toLocaleString?.() || c.pop) : '?';
     div.innerHTML=`<div>${cityLabel(c)} <span class="muted" style="font-size:12px;">(${popStr})</span></div><div class="badge">${lab}</div>`;
     cityListEl.appendChild(div);
   });
 }
+
 function renderSummary(){
   summaryEl.innerHTML='';
   if(guesses.length!==roundCities.length) return;
   const header=document.createElement('div'); header.className='cityitem';
   header.innerHTML=`<div><strong>Round Summary</strong></div><div class="badge">Total: ${fmtKm(totalErrorKm)}</div>`;
   summaryEl.appendChild(header);
-  guesses.map(g=>({name:cityLabel(g.city),dist:g.distKm})).sort((a,b)=>b.dist-a.dist).forEach(r=>{
-    const row=document.createElement('div'); row.className='cityitem';
-    row.innerHTML=`<div>${r.name}</div><div class="badge">${fmtKm(r.dist)}</div>`; summaryEl.appendChild(row);
-  });
+  guesses.map(g=>({name:cityLabel(g.city),dist:g.distKm}))
+         .sort((a,b)=>b.dist-a.dist)
+         .forEach(r=>{
+           const row=document.createElement('div'); row.className='cityitem';
+           row.innerHTML=`<div>${r.name}</div><div class="badge">${fmtKm(r.dist)}</div>`;
+           summaryEl.appendChild(row);
+         });
 }
 
-/* ========= Round control ========= */
+function clearProvisional(){
+  if(provisional && provisional.marker){ map.removeLayer(provisional.marker); }
+  provisional = null;
+}
+
 function clearMapLayers(){
   guesses.forEach(g=>{
     if(g.layers){
@@ -257,41 +265,39 @@ function clearMapLayers(){
       if(g.layers.line) map.removeLayer(g.layers.line);
     }
   });
+  clearProvisional();
 }
-function resetRoundUI(){guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();}
-function startRound(){
-  if(!allCities.length){alert('Dataset not loaded yet.'); return;}
-  const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
 
-  // Difficulty threshold
+function resetRoundUI(){
+  guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();
+  clearProvisional();
+}
+
+function startRound(){
+  if(!allCities.length){ alert('Dataset not loaded yet.'); return; }
+  const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
   const diffSel=[...document.querySelectorAll('input[name="difficulty"]')].find(r=>r.checked)?.value || "100000";
-  let minPop = 100000;
-  if (diffSel === "custom") {
-    const custom = parseInt(document.getElementById('customMinPop').value||'10000',10);
-    minPop = isFinite(custom) ? Math.max(1, custom) : 10000;
-  } else {
-    minPop = parseInt(diffSel,10);
-  }
+  let minPop = diffSel==="custom" ? parseInt(document.getElementById('customMinPop').value||'10000',10) : parseInt(diffSel,10);
+  if(!Number.isFinite(minPop) || minPop<1) minPop=10000;
 
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
-  if (pool.length < num) {
-    alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Lower the difficulty or reduce number per round.`);
-    return;
-  }
+  if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  const seedStr=document.getElementById('seedInput').value.trim(); rng=seedStr?mulberry32(xmur3(seedStr)()):Math.random;
-
+  // Shuffle pool with Fisher–Yates
   const idxs=[...pool.keys()];
-  for(let i=idxs.length-1;i>0;i--){const j=Math.floor(rng()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
   clearMapLayers(); resetRoundUI(); renderCityList(); nextCity();
 }
+
 function nextCity(){
   currentIndex++;
+  clearProvisional();
+
   if(currentIndex>=roundCities.length){
-    currentCityTopEl.textContent = 'Round complete!';
-    currentPromptEl.textContent = 'Round complete! Review your results below.';
+    currentCityTopEl.textContent='Round complete!';
+    currentPromptEl.textContent='Round complete! Review your results below.';
     renderSummary();
     if(hideTrueUntilEnd){
       guesses.forEach(g=>{
@@ -302,46 +308,63 @@ function nextCity(){
     }
     return;
   }
-  setPromptText(roundCities[currentIndex]);
+  setTopAndPrompt(roundCities[currentIndex]);
   updateScoreBox(); renderCityList();
 }
-function undoLast(){
-  if(guesses.length===0) return;
-  if(currentIndex>=roundCities.length){ alert('Round complete. Start a new round or clear the map.'); return; }
-  const last=guesses.pop(); totalErrorKm-=last.distKm;
-  if(last.layers){ if(last.layers.guessMarker) map.removeLayer(last.layers.guessMarker);
-    if(last.layers.trueMarker) map.removeLayer(last.layers.trueMarker);
-    if(last.layers.line) map.removeLayer(last.layers.line); }
-  currentIndex--; renderCityList(); updateScoreBox();
-  setPromptText(roundCities[currentIndex+1]);
-}
 
-/* ========= Map clicks ========= */
+/* ========= Click to place/move a provisional pin ========= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
+  const lat=e.latlng.lat, lon=e.latlng.lng;
+
+  if(!provisional){
+    const marker=L.circleMarker([lat,lon],{
+      radius:7, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.5
+    }).bindTooltip('Your pin (click Confirm to submit)', {direction:'top'});
+    marker.addTo(map);
+    provisional = {lat, lon, marker};
+  }else{
+    provisional.lat = lat; provisional.lon = lon;
+    provisional.marker.setLatLng([lat,lon]);
+  }
+});
+
+/* ========= Confirm current pin (advance) ========= */
+function confirmGuess(){
+  if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
-  const guessLat=e.latlng.lat, guessLon=e.latlng.lng;
+
+  if(!provisional){
+    alert('Place a pin on the map first, then press Confirm.');
+    return;
+  }
+
+  const guessLat=provisional.lat, guessLon=provisional.lon;
   const trueLat=c.lat, trueLon=c.lon;
   const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
 
-  const guessMarker=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
-    .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
-  const trueMarker=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
-    .bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'});
-  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'});
+  // Freeze the guess marker (make a permanent one), and clear provisional
+  if(provisional.marker){ map.removeLayer(provisional.marker); }
+  const guessMarker=L.circleMarker([guessLat,guessLon],{
+    radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
+  }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+
+  const trueMarker=L.circleMarker([trueLat,trueLon],{
+    radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
+  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'});
+
+  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{
+    weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
+  });
 
   if(!hideTrueUntilEnd){ trueMarker.addTo(map); line.addTo(map); }
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
   totalErrorKm+=dKm; updateScoreBox(); renderCityList();
 
-  const lockPan=document.getElementById('lockPan').checked;
-  if(!lockPan && !hideTrueUntilEnd){
-    const bounds=L.latLngBounds([[guessLat,guessLon],[trueLat,trueLon]]);
-    map.fitBounds(bounds.pad(0.3),{animate:true});
-  }
+  provisional = null;
   nextCity();
-});
+}
 
 /* ========= Data loading ========= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
@@ -353,15 +376,14 @@ function parseAdmin1(text){
   for(const line of lines){
     if(!line || !line.includes('\t')) continue;
     const parts = line.split('\t');
-    // Format: KEY \t Name \t ASCII \t geonameid
-    const key = parts[0]?.trim(); // e.g., "US.CA"
-    const name = parts[1]?.trim(); // human-readable name
+    const key = parts[0]?.trim();   // e.g., "US.CA"
+    const name = parts[1]?.trim();  // "California"
     if(key && name) map[key] = name;
   }
   return map;
 }
 
-/* Extract subdivision via mapping; fallback to LABEL EN heuristics */
+/* Extract subdivision via mapping; fallback to LABEL EN heuristic */
 function extractSubdivision(row, adminMap){
   const cc = (row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
   const a1 = (row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
@@ -369,7 +391,6 @@ function extractSubdivision(row, adminMap){
     const key = `${cc}.${a1}`;
     if(adminMap[key]) return adminMap[key];
   }
-  // Fallback: LABEL EN "City, Subdivision, Country"
   const labelEn = row['LABEL EN'] ?? null;
   const countryName = row['Country name EN'] ?? null;
   if(labelEn){
@@ -392,21 +413,16 @@ function parseRowsToCities(rows){
     const name = (r.name ?? r.city ?? r.City ?? r.Name ?? r['ASCII Name'] ?? '').toString().trim();
     if(!name) continue;
 
-    // Population
     let pop = r.Population ?? r.population ?? r.pop ?? r['Population '];
     const popNum = parseInt(pop, 10);
     const finalPop = Number.isFinite(popNum) ? popNum : null;
 
-    // Coordinates
     let lat = r.lat ?? r.latitude ?? r.Lat ?? r.Latitude;
     let lon = r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude;
     if ((lat==null || lon==null) && (r.Coordinates!=null || r['Coordinates ']!=null)) {
       const coordStr = (r.Coordinates ?? r['Coordinates ']).toString();
       const parts = coordStr.split(',', 2);
-      if (parts.length === 2) {
-        lat = parts[0].trim();
-        lon = parts[1].trim();
-      }
+      if (parts.length === 2) { lat = parts[0].trim(); lon = parts[1].trim(); }
     }
     const latNum = parseFloat(lat);
     const lonNum = parseFloat(lon);
@@ -423,39 +439,38 @@ function loadCSV(url){
     download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
     complete: function(res){
       const cities = parseRowsToCities(res.data);
-      if(!cities.length){ alert('No valid rows found in geonames_10k_plus.csv'); return; }
+      if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
       allCities = cities;
-      currentCityTopEl.textContent = 'Dataset loaded. Pick a difficulty and start a round.';
-      currentPromptEl.textContent = 'Dataset loaded. Pick a difficulty and start a round.';
+      currentCityTopEl.textContent = 'Dataset loaded. Choose difficulty, press Start, then click the map and Confirm.';
+      currentPromptEl.textContent = 'Dataset loaded. Choose difficulty, press Start, then click the map and Confirm.';
     },
     error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
 }
 
 async function boot(){
-  // 1) Load admin map
+  // Load admin map
   try{
     const txt = await (await fetch('admin1CodesASCII.txt')).text();
     adminMap = parseAdmin1(txt);
   }catch(e){
     console.error('Failed to load admin1CodesASCII.txt', e);
-    alert('Could not load admin1CodesASCII.txt (subdivision names). We will still load cities, but without subdivisions.');
     adminMap = {};
   }
-
-  // 2) Load city CSV (≥10k, with Country Code + Admin1 Code present)
-  loadCSV('geonames_10k_plus.csv');
+  // Load city CSV (≥10k)
+  loadCSV('geonames_10k.csv');
 }
 
 window.addEventListener('DOMContentLoaded', boot);
 
+/* ========= Controls ========= */
 document.getElementById('startBtn').addEventListener('click', startRound);
-document.getElementById('undoBtn').addEventListener('click', undoLast);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
   clearMapLayers(); resetRoundUI(); renderCityList();
   currentCityTopEl.textContent = 'Map cleared. Start a new round to play again.';
   currentPromptEl.textContent = 'Map cleared. Start a new round to play again.';
 });
+document.getElementById('confirmBtn').addEventListener('click', confirmGuess);
 document.getElementById('hideTrueUntilEnd').addEventListener('change',(e)=>{ hideTrueUntilEnd=e.currentTarget.checked; });
 hideTrueUntilEnd=document.getElementById('hideTrueUntilEnd').checked;
 </script>
