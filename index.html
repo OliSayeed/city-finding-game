@@ -180,7 +180,7 @@
         <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
         <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
       </div>
-      <!-- Intentionally no extra content below status; final screen stays empty here -->
+      <!-- Empty area kept intentionally; results use top-center title instead. -->
       <div id="summary" style="display:none;"></div>
     </div>
   </aside>
@@ -223,6 +223,12 @@ const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 
+/* Feedback layers (only for current city) */
+let feedbackLayers = [];
+
+/* Results layers (entire round) */
+let resultLayers = [];
+
 /* ========= Wikipedia prefetch cache + robust fetch (redirects/diacritics) ========= */
 const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
@@ -236,30 +242,21 @@ function wikiCandidates(city){
   return arr;
 }
 async function fetchWikiSummary(title){
-  // Try REST summary with redirect support
   const slug = encodeURIComponent(title.replace(/\s+/g,'_'));
-  const urls = [
-    `https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`,
-    // Fallback: search first result, then summary
-    `https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`
-  ];
-  // First attempt (REST)
-  try{
-    const r = await fetch(urls[0]);
-    if(r.ok){
+  const try1 = `https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`;
+  try {
+    const r = await fetch(try1);
+    if (r.ok) {
       const d = await r.json();
-      let chosen = d.title || title;
-      // If this was a disambiguation, the REST API marks 'type: disambiguation' — still show it.
-      const imgSrc = (d.originalimage && d.originalimage.source) ? d.originalimage.source
-                 : (d.thumbnail && d.thumbnail.source) ? d.thumbnail.source
-                 : null;
-      const pageUrl = d.content_urls && d.content_urls.desktop && d.content_urls.desktop.page;
-      return { title: chosen, extract: d.extract || 'No summary available.', imgSrc: imgSrc || null, pageUrl: pageUrl || null };
+      const img = (d.originalimage && d.originalimage.source) ? d.originalimage.source
+                : (d.thumbnail && d.thumbnail.source) ? d.thumbnail.source : null;
+      const page = d.content_urls?.desktop?.page || null;
+      return { title: d.title || title, extract: d.extract || 'No summary available.', imgSrc: img, pageUrl: page };
     }
-  }catch(e){}
-  // Second attempt (search → summary)
+  } catch(e){}
+  // Fallback: search API then summary of first result
   try{
-    const s = await fetch(urls[1]);
+    const s = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`);
     const sj = await s.json();
     const first = sj?.query?.search?.[0]?.title;
     if(first){
@@ -268,10 +265,9 @@ async function fetchWikiSummary(title){
       if(r2.ok){
         const d2 = await r2.json();
         const img2 = (d2.originalimage && d2.originalimage.source) ? d2.originalimage.source
-                  : (d2.thumbnail && d2.thumbnail.source) ? d2.thumbnail.source
-                  : null;
-        const page2 = d2.content_urls && d2.content_urls.desktop && d2.content_urls.desktop.page;
-        return { title: d2.title || first, extract: d2.extract || 'No summary available.', imgSrc: img2 || null, pageUrl: page2 || null };
+                  : (d2.thumbnail && d2.thumbnail.source) ? d2.thumbnail.source : null;
+        const page2 = d2.content_urls?.desktop?.page || null;
+        return { title: d2.title || first, extract: d2.extract || 'No summary available.', imgSrc: img2, pageUrl: page2 };
       }
     }
   }catch(e){}
@@ -280,10 +276,8 @@ async function fetchWikiSummary(title){
 async function prefetchWiki(city){
   const key = cityKey(city);
   if(wikiCache.has(key)) return;
-  const candidates = wikiCandidates(city);
-  for(const t of candidates){
+  for(const t of wikiCandidates(city)){
     const info = await fetchWikiSummary(t);
-    // Accept the first non-empty extract we get
     if(info && info.extract && info.extract.length){
       wikiCache.set(key, info);
       return;
@@ -307,21 +301,24 @@ function updateScoreBox(){
 /* ========= Sidebar visibility ========= */
 function showFeedbackUI(){
   controlsSection.style.display = 'none';
-  document.getElementById('wikiSide').classList.add('open');
+  wikiSide.classList.add('open');
 }
 function hideFeedbackUI(){
   controlsSection.style.display = '';
-  document.getElementById('wikiSide').classList.remove('open');
+  wikiSide.classList.remove('open');
 }
 
 /* ========= Map helpers ========= */
 function resetMapView(){
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
-  // Remove any provisional pin
+  clearFeedbackLayers();
   if(provisional && provisional.marker){ map.removeLayer(provisional.marker); }
   provisional = null;
-  // Remove any per-question layers (we actually don't add any in feedback now)
   map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
+}
+function clearFeedbackLayers(){
+  feedbackLayers.forEach(l => map.removeLayer(l));
+  feedbackLayers = [];
 }
 function fitToAllGuesses(){
   const pts=[];
@@ -335,9 +332,6 @@ function fitToAllGuesses(){
     resetMapView();
   }
 }
-
-/* ========= Per-round layers for results ========= */
-let resultLayers = [];
 function clearResultLayers(){
   resultLayers.forEach(l => map.removeLayer(l));
   resultLayers = [];
@@ -387,14 +381,13 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Fisher–Yates shuffle
+  // Shuffle and pick
   const idxs=[...pool.keys()];
   for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
   // Reset round state
-  clearResultLayers();
-  guesses=[]; totalErrorKm=0; currentIndex=-1; updateScoreBox();
+  clearResultLayers(); guesses=[]; totalErrorKm=0; currentIndex=-1; updateScoreBox();
   setTopCity(null); hideFeedbackUI(); actionMode='confirm'; confirmBtn.textContent='Confirm';
   resetMapView();
 
@@ -408,15 +401,12 @@ function nextCity(){
   resetMapView();
 
   if(currentIndex>=roundCities.length){
-    // End reached — center title shows summary; button shows "Start new round" after results
     setTopRoundSummary();
-    // Keep status as-is; results view toggled by 'See results' path
     return;
   }
   const city = roundCities[currentIndex];
   setTopCity(city);
   updateScoreBox();
-  // Prefetch wiki for speed
   prefetchWiki(city);
 }
 
@@ -436,17 +426,32 @@ async function confirmGuess(){
   const trueLat=c.lat, trueLon=c.lon;
   const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
 
-  // Record but DO NOT draw markers/lines now (per request)
+  // Record for results
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Feedback UI: show wiki (from cache), show distance in title
+  // --- FEEDBACK VIEW: draw current city's layers + zoom in + labels ---
+  if(provisional.marker){ map.removeLayer(provisional.marker); }
+  const guessMarker=L.circleMarker([guessLat,guessLon],{
+    radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
+  }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+
+  const trueMarker=L.circleMarker([trueLat,trueLon],{
+    radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
+  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
+
+  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{
+    weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
+  }).addTo(map);
+
+  feedbackLayers.push(guessMarker,trueMarker,line);
+  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+  map.setView([trueLat,trueLon], 9, { animate:true });
+
+  // Sidebar + title feedback
   setTopDistance(dKm);
   showFeedbackUI();
   populateWikiFromCache(c);
-
-  // Completely reset map (no points/lines visible); no labels overlay
-  resetMapView();
 
   // Button state: Next city or See results if last
   const isLast = (currentIndex === roundCities.length - 1);
@@ -472,30 +477,21 @@ function populateWikiFromCache(city){
   }
   wikiTitle.textContent = info.title || cityLabel(city);
   wikiExtract.textContent = info.extract || 'No summary available.';
-  if(info.imgSrc){
-    wikiImg.src = info.imgSrc; wikiImg.style.display='block';
-  }else{
-    wikiImg.style.display='none'; wikiImg.removeAttribute('src');
-  }
-  if(info.pageUrl){
-    wikiLink.href = info.pageUrl; wikiActions.style.display='flex';
-  }else{
-    wikiActions.style.display='none';
-  }
+  if(info.imgSrc){ wikiImg.src = info.imgSrc; wikiImg.style.display='block'; }
+  else { wikiImg.style.display='none'; wikiImg.removeAttribute('src'); }
+  if(info.pageUrl){ wikiLink.href = info.pageUrl; wikiActions.style.display='flex'; }
+  else { wikiActions.style.display='none'; }
 }
 
 /* ========= Results view ========= */
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
 function showRoundResults(){
   hideFeedbackUI();
-  // Title: round summary in the top-center slot
-  setTopRoundSummary();
-
-  // Draw all guess/true markers + lines now
+  clearFeedbackLayers(); // remove current city's overlays
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
   fitToAllGuesses();
-
-  // Change button to restart
+  setTopRoundSummary();
   actionMode = 'restart';
   confirmBtn.textContent = 'Start new round';
 }
@@ -528,9 +524,6 @@ function extractSubdivision(row){
     if(parts.length >= 3){
       const last = parts[parts.length-1];
       const penultimate = parts[parts.length-2];
-      if(countryName && last && last.toLowerCase()===countryName.toLowerCase()){
-        return penultimate || null;
-      }
       return penultimate || null;
     }
   }
@@ -553,8 +546,7 @@ function parseRowsToCities(rows){
       const parts = coordStr.split(',', 2);
       if (parts.length === 2) { lat = parts[0].trim(); lon = parts[1].trim(); }
     }
-    const latNum = parseFloat(lat);
-    const lonNum = parseFloat(lon);
+    const latNum = parseFloat(lat), lonNum = parseFloat(lon);
     if(!isFinite(latNum) || !isFinite(lonNum)) continue;
 
     const sub = extractSubdivision(r);
@@ -589,8 +581,10 @@ window.addEventListener('DOMContentLoaded', boot);
 /* ========= Controls ========= */
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
-  // Clear everything and just reset map; keep current round (do not reshuffle)
+  // Clear overlays, keep current round
+  clearFeedbackLayers();
   clearResultLayers();
+  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
   resetMapView();
 });
 </script>
