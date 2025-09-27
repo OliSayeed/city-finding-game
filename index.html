@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>City finding game</title>
 
+<!-- Performance hints for Wikipedia -->
 <link rel="preconnect" href="https://en.wikipedia.org" crossorigin>
 <link rel="preconnect" href="https://upload.wikimedia.org" crossorigin>
 
+<!-- Leaflet -->
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -18,94 +20,147 @@
   src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
   crossorigin=""
-  defer
 ></script>
 
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
+<!-- Papa Parse -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
   :root {
-    --bg: #0b0c0f; --panel: #111317; --muted: #a9b0bd; --text: #e9eef6;
-    --accent: #6aa0ff; --good: #22c55e; --mid: #f59e0b; --border: #1f2430;
+    --bg: #0b0c0f;
+    --panel: #111317;
+    --muted: #a9b0bd;
+    --text: #e9eef6;
+    --accent: #6aa0ff;
+    --good: #22c55e;
+    --mid: #f59e0b;
+    --border: #1f2430;
   }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial; }
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
+  /* Top bar: brand (left), absolute-centered title (city/distance/summary), action button on right */
   .topbar {
-    position: fixed; z-index: 1000; top: 0; left: 0; right: 0; background: #0e1117;
-    border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;
+    position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
+    background: #0e1117; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.35);
   }
-  .brand, .current-city { font-size: 22px; font-weight: 800; letter-spacing: .2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand, .current-city {
+    font-size: 22px; font-weight: 800; letter-spacing: .2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .brand { width: 180px; }
-  .current-city { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; max-width: calc(100vw - 360px); }
-  .current-city .cty { color: #fff; } .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
+  .current-city {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    text-align: center; max-width: calc(100vw - 360px);
+  }
+  .current-city .cty { color: #fff; }
+  .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
   .topbar-right { width: 180px; display:flex; justify-content:flex-end; }
-  .btn { appearance:none; border:none; cursor:pointer; padding:10px 12px; border-radius:12px; background:#1a2233; color:var(--text);
-    transition: transform .02s ease, opacity .2s ease, background .2s ease; font-weight:600; letter-spacing:.2px; }
-  .btn:hover{ background:#1d2740;} .btn:active{ transform: translateY(1px);} .btn.accent{ background:var(--accent); color:#081021;}
 
-  .app { display:grid; grid-template-columns:380px 1fr; grid-template-rows: calc(100vh - 56px); margin-top:56px; }
-  .sidebar{ background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column;}
-  .section{ padding:16px 18px; border-bottom:1px solid var(--border);} h1{ font-size:18px; margin:0 0 8px; letter-spacing:.2px;}
-  .muted{ color:var(--muted); font-size:13px; }
-  #map{ height: calc(100vh - 56px); width:100%; }
+  .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
+    background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
+    font-weight: 600; letter-spacing: .2px; }
+  .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
+  .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
 
-  .scorebox{ display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;}
-  .scorecard{ background:#0d0f13; border:1px solid var(--border); border-radius:12px; padding:10px; text-align:center;}
-  .scorecard .big{ font-size:22px; font-weight:700;}
+  /* Layout below the topbar */
+  .app {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    grid-template-rows: calc(100vh - 56px);
+    margin-top: 56px;
+  }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .section { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: .2px; }
+  .muted { color: var(--muted); font-size: 13px; }
 
-  .wiki-side{ display:none; gap:10px;} .wiki-side.open{ display:grid;}
-  .wiki-title{ font-weight:800; margin:0; font-size:22px; letter-spacing:.2px;}
-  .wiki-image{ width:100%; border-radius:10px; display:none;}
-  .wiki-extract{ font-size:13px; color:var(--muted); line-height:1.45; max-height:28vh; overflow:auto;}
-  .wiki-actions{ display:flex; gap:10px;} .wiki-actions a{ text-decoration:none; color:var(--text); font-weight:600;}
+  #map { height: calc(100vh - 56px); width: 100%; }
 
-  .controls label{ display:block; font-size:13px; margin-bottom:6px; color:var(--muted);}
-  .controls .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px;}
-  .controls input[type="number"]{ width:100%; padding:10px 12px; background:#0d0f13; border:1px solid var(--border); border-radius:10px; color:#e9eef6;}
-  .btnbar{ display:flex; gap:8px; flex-wrap:wrap;}
+  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
+  .scorecard .big { font-size: 22px; font-weight: 700; }
 
-  @media (max-width: 1000px){
-    .app{ grid-template-columns:1fr; grid-template-rows:auto 70vh; }
-    #map{ height: calc(70vh); }
-    .current-city{ font-size:18px; max-width: calc(100vw - 240px); }
-    .brand, .topbar-right{ width:120px; }
+  /* Wikipedia panel in sidebar (visible only during feedback mode) */
+  .wiki-side { display: none; gap: 10px; }
+  .wiki-side.open { display: grid; }
+  .wiki-title {
+    font-weight: 800; margin: 0; font-size: 22px; letter-spacing: .2px;
+  }
+  .wiki-image { width: 100%; border-radius: 10px; display: none; }
+  .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.45; max-height: 28vh; overflow: auto; }
+  .wiki-actions { display:flex; gap:10px; }
+  .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
+
+  .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
+  .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .controls input[type="number"] {
+    width: 100%; padding: 10px 12px; background: #0d0f13; border: 1px solid var(--border);
+    border-radius: 10px; color: #e9eef6;
+  }
+  .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  @media (max-width: 1000px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
+    #map { height: calc(70vh); }
+    .current-city { font-size: 18px; max-width: calc(100vw - 240px); }
+    .brand, .topbar-right { width: 120px; }
   }
 </style>
 </head>
 <body>
+
+<!-- Top bar -->
 <div class="topbar">
   <div class="brand">Find the city</div>
   <div class="current-city" id="currentCityTop"></div>
   <div class="topbar-right">
-    <button id="confirmBtn" class="btn accent">Confirm</button>
+    <button id="confirmBtn" class="btn accent" title="Submit your current pin">Confirm</button>
   </div>
 </div>
 
 <div class="app">
   <aside class="sidebar">
+    <!-- CONTROLS (top in normal mode; hidden during feedback) -->
     <div id="controlsSection" class="section controls">
       <h1>Controls</h1>
       <label>Difficulty (population threshold)</label>
       <div class="radio-group" id="difficultyGroup" style="display:grid;gap:6px;margin-top:8px;">
-        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="difficulty" value="1000000"><span>≥ 1,000,000</span></label>
-        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="difficulty" value="100000" checked><span>≥ 100,000</span></label>
-        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="difficulty" value="10000"><span>≥ 10,000</span></label>
-        <label style="display:flex;align-items:center;gap:8px;">
-          <input type="radio" name="difficulty" value="custom" id="diffCustom"><span>Custom ≥</span>
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
+          <input type="radio" name="difficulty" value="1000000">
+          <span>≥ 1,000,000</span>
+        </label>
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
+          <input type="radio" name="difficulty" value="100000" checked>
+          <span>≥ 100,000</span>
+        </label>
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
+          <input type="radio" name="difficulty" value="10000">
+          <span>≥ 10,000</span>
+        </label>
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
+          <input type="radio" name="difficulty" value="custom" id="diffCustom">
+          <span>Custom ≥</span>
           <input id="customMinPop" type="number" min="1" step="1000" value="10000" style="max-width:120px;">
         </label>
       </div>
+
       <div class="row" style="margin-top:10px;">
-        <div><label>Number per round</label><input id="numPerRound" type="number" min="1" max="200" step="1" value="10" /></div>
+        <div>
+          <label>Number per round</label>
+          <input id="numPerRound" type="number" min="1" max="200" step="1" value="10" />
+        </div>
       </div>
+
       <div class="btnbar" style="margin-top:10px;">
         <button id="startBtn" class="btn accent">Start new round</button>
         <button id="resetBtn" class="btn">Clear map</button>
       </div>
     </div>
 
+    <!-- WIKIPEDIA PANEL (appears only during feedback) -->
     <div id="wikiSection" class="section">
       <div id="wikiSide" class="wiki-side">
         <div class="wiki-title" id="wikiTitle">Wikipedia</div>
@@ -117,6 +172,7 @@
       </div>
     </div>
 
+    <!-- ROUND STATUS (below controls/panel) -->
     <div id="statusSection" class="section">
       <h1>Round status</h1>
       <div class="scorebox" style="margin-bottom:10px;">
@@ -124,6 +180,7 @@
         <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
         <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
       </div>
+      <!-- Empty area kept intentionally; results use top-center title instead. -->
       <div id="summary" style="display:none;"></div>
     </div>
   </aside>
@@ -132,160 +189,188 @@
 </div>
 
 <script>
-/* ===== Utils ===== */
+/* ========= Distance (km) ========= */
 function haversineKm(lat1,lon1,lat2,lon2){
-  const R=6371, toRad=d=>d*Math.PI/180, dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const R=6371, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
   const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
 }
-function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
-function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 
-/* ===== Map ===== */
-const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true,zoomAnimation:true,zoomAnimationThreshold:4})
-  .setView([20,0],2);
-const baseNoLabels=L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
-const labelsOverlay=L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
+/* ========= Map ========= */
+const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
+const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
 map.setMaxBounds([[-85,-200],[85,200]]);
-const WORLD_VIEW={center:[20,0],zoom:2};
 
-/* Use SVG renderer; IMPORTANT: we only draw markers/line AFTER camera settles */
-const svgRenderer=L.svg({padding:0.5}); svgRenderer.addTo(map);
+const WORLD_VIEW = { center: [20,0], zoom: 2 };
 
-/* ===== State ===== */
-let adminMap={}, allCities=[], roundCities=[], currentIndex=-1;
-let guesses=[], totalErrorKm=0;
-let provisional=null; // {lat, lon, marker}
-let actionMode='confirm'; // 'confirm' | 'next' | 'results' | 'restart'
+/* ========= State ========= */
+let adminMap = {}; // "CC.Admin1Code" -> Subdivision name
+let allCities=[];   // [{name, lat, lon, pop, sub, country}]
+let roundCities=[]; let currentIndex=-1;
+let guesses=[]; let totalErrorKm=0;
+
+let provisional = null; // {lat, lon, marker}
+let actionMode = 'confirm'; // 'confirm' | 'next' | 'results' | 'restart'
 
 const currentCityTopEl=document.getElementById('currentCityTop');
 const confirmBtn=document.getElementById('confirmBtn');
-const controlsSection=document.getElementById('controlsSection');
-const wikiSide=document.getElementById('wikiSide');
+const controlsSection = document.getElementById('controlsSection');
+const wikiSide = document.getElementById('wikiSide');
+
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 
-/* Feedback layers for current city (SVG) */
-let feedbackLayers=[];
+/* Feedback layers (only for current city) */
+let feedbackLayers = [];
 
-/* Results layers */
-let resultLayers=[];
+/* Results layers (entire round) */
+let resultLayers = [];
 
-/* ===== Wikipedia (fetch only when needed; no prefetch to keep startup snappy) ===== */
+/* ========= Wikipedia prefetch cache + robust fetch (redirects/diacritics) ========= */
+const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
+function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
+
+function wikiCandidates(city){
+  const arr=[];
+  if(city.sub && city.country){ arr.push(`${city.name}, ${city.sub}, ${city.country}`); }
+  if(city.sub){ arr.push(`${city.name}, ${city.sub}`); }
+  if(city.country){ arr.push(`${city.name}, ${city.country}`); }
+  arr.push(city.name);
+  return arr;
+}
 async function fetchWikiSummary(title){
-  const slug=encodeURIComponent(title.replace(/\s+/g,'_'));
-  try{
-    const r=await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`);
-    if(r.ok){
-      const d=await r.json();
-      return {
-        title:d.title||title,
-        extract:d.extract||'No summary available.',
-        imgSrc:d.originalimage?.source || d.thumbnail?.source || null,
-        pageUrl:d.content_urls?.desktop?.page || null
-      };
+  const slug = encodeURIComponent(title.replace(/\s+/g,'_'));
+  const try1 = `https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`;
+  try {
+    const r = await fetch(try1);
+    if (r.ok) {
+      const d = await r.json();
+      const img = (d.originalimage && d.originalimage.source) ? d.originalimage.source
+                : (d.thumbnail && d.thumbnail.source) ? d.thumbnail.source : null;
+      const page = d.content_urls?.desktop?.page || null;
+      return { title: d.title || title, extract: d.extract || 'No summary available.', imgSrc: img, pageUrl: page };
     }
-  }catch(e){}
+  } catch(e){}
+  // Fallback: search API then summary of first result
   try{
-    const s=await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`);
-    const sj=await s.json(); const first=sj?.query?.search?.[0]?.title;
+    const s = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`);
+    const sj = await s.json();
+    const first = sj?.query?.search?.[0]?.title;
     if(first){
-      const slug2=encodeURIComponent(first.replace(/\s+/g,'_'));
-      const r2=await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug2}?redirect=true`);
+      const slug2 = encodeURIComponent(first.replace(/\s+/g,'_'));
+      const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug2}?redirect=true`);
       if(r2.ok){
-        const d2=await r2.json();
-        return {
-          title:d2.title||first,
-          extract:d2.extract||'No summary available.',
-          imgSrc:d2.originalimage?.source || d2.thumbnail?.source || null,
-          pageUrl:d2.content_urls?.desktop?.page || null
-        };
+        const d2 = await r2.json();
+        const img2 = (d2.originalimage && d2.originalimage.source) ? d2.originalimage.source
+                  : (d2.thumbnail && d2.thumbnail.source) ? d2.thumbnail.source : null;
+        const page2 = d2.content_urls?.desktop?.page || null;
+        return { title: d2.title || first, extract: d2.extract || 'No summary available.', imgSrc: img2, pageUrl: page2 };
       }
     }
   }catch(e){}
-  return {title, extract:'No summary found on Wikipedia.', imgSrc:null, pageUrl:null};
+  return { title, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null };
 }
-async function populateWiki(city){
-  const tOptions=[];
-  if(city.sub && city.country) tOptions.push(`${city.name}, ${city.sub}, ${city.country}`);
-  if(city.sub) tOptions.push(`${city.name}, ${city.sub}`);
-  if(city.country) tOptions.push(`${city.name}, ${city.country}`);
-  tOptions.push(city.name);
-  let info=null;
-  for(const t of tOptions){ info=await fetchWikiSummary(t); if(info && info.extract) break; }
-
-  const wikiTitle=document.getElementById('wikiTitle');
-  const wikiExtract=document.getElementById('wikiExtract');
-  const wikiLink=document.getElementById('wikiLink');
-  const wikiActions=document.getElementById('wikiActions');
-  const wikiImg=document.getElementById('wikiImg');
-
-  wikiTitle.textContent = (info && info.title) || cityLabel(city);
-  wikiExtract.textContent = (info && info.extract) || 'No summary available.';
-  if(info && info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; } else { wikiImg.style.display='none'; wikiImg.removeAttribute('src'); }
-  if(info && info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; } else { wikiActions.style.display='none'; }
+async function prefetchWiki(city){
+  const key = cityKey(city);
+  if(wikiCache.has(key)) return;
+  for(const t of wikiCandidates(city)){
+    const info = await fetchWikiSummary(t);
+    if(info && info.extract && info.extract.length){
+      wikiCache.set(key, info);
+      return;
+    }
+  }
+  wikiCache.set(key, {title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null});
 }
 
-/* ===== UI helpers ===== */
+/* ========= UI helpers ========= */
+function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
+function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; }
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
   totalErrorEl.textContent=fmtKm(totalErrorKm);
 }
-function showFeedbackUI(){ controlsSection.style.display='none'; wikiSide.classList.add('open'); }
-function hideFeedbackUI(){ controlsSection.style.display=''; wikiSide.classList.remove('open'); }
 
-/* ===== Map helpers ===== */
-function clearFeedbackLayers(){
-  feedbackLayers.forEach(l=>map.removeLayer(l));
-  feedbackLayers=[];
+/* ========= Sidebar visibility ========= */
+function showFeedbackUI(){
+  controlsSection.style.display = 'none';
+  wikiSide.classList.add('open');
 }
+function hideFeedbackUI(){
+  controlsSection.style.display = '';
+  wikiSide.classList.remove('open');
+}
+
+/* ========= Map helpers ========= */
 function resetMapView(){
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
   clearFeedbackLayers();
-  if(provisional && provisional.marker) map.removeLayer(provisional.marker);
-  provisional=null;
-  map.flyTo(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true, duration:0.9});
+  if(provisional && provisional.marker){ map.removeLayer(provisional.marker); }
+  provisional = null;
+  map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
 }
-function clearResultLayers(){ resultLayers.forEach(l=>map.removeLayer(l)); resultLayers=[]; }
+function clearFeedbackLayers(){
+  feedbackLayers.forEach(l => map.removeLayer(l));
+  feedbackLayers = [];
+}
+function fitToAllGuesses(){
+  const pts=[];
+  guesses.forEach(g=>{
+    pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]);
+  });
+  if(pts.length){
+    const bounds = L.latLngBounds(pts);
+    map.fitBounds(bounds.pad(0.2));
+  }else{
+    resetMapView();
+  }
+}
+function clearResultLayers(){
+  resultLayers.forEach(l => map.removeLayer(l));
+  resultLayers = [];
+}
 function drawResultsLayers(){
   clearResultLayers();
   guesses.forEach(g=>{
-    const gm=L.circleMarker([g.guessLat,g.guessLon],{renderer:svgRenderer,updateWhenZooming:true,radius:5,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.35})
-      .bindTooltip(`Your guess — ${fmtKm(g.distKm)}`,{direction:'top'}).addTo(map);
-    const tm=L.circleMarker([g.trueLat,g.trueLon],{renderer:svgRenderer,updateWhenZooming:true,radius:5,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
-      .bindTooltip(`${cityLabel(g.city)} — true`,{direction:'top'}).addTo(map);
-    const ln=L.polyline([[g.guessLat,g.guessLon],[g.trueLat,g.trueLon]],{renderer:svgRenderer,updateWhenZooming:true,weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
-    resultLayers.push(gm,tm,ln);
+    const guessMarker=L.circleMarker([g.guessLat,g.guessLon],{
+      radius:5, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.35
+    }).bindTooltip(`Your guess — ${fmtKm(g.distKm)}`,{direction:'top'});
+    const trueMarker=L.circleMarker([g.trueLat,g.trueLon],{
+      radius:5, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
+    }).bindTooltip(`${cityLabel(g.city)} — true`,{direction:'top'});
+    const line=L.polyline([[g.guessLat,g.guessLon],[g.trueLat,g.trueLon]],{
+      weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
+    });
+    guessMarker.addTo(map); trueMarker.addTo(map); line.addTo(map);
+    resultLayers.push(guessMarker,trueMarker,line);
   });
 }
-function fitToAllGuesses(){
-  const pts=[]; guesses.forEach(g=>{ pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]); });
-  if(!pts.length){ resetMapView(); return; }
-  const b=L.latLngBounds(pts).pad(0.2);
-  map.flyToBounds(b,{animate:true,duration:1.2});
-}
 
-/* ===== Provisional pin before Confirm (SVG) ===== */
-map.on('click', (e)=>{
+/* ========= Provisional pin handling ========= */
+map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
-  if(actionMode!=='confirm') return;
-  const {lat,lng}=e.latlng;
+  if(actionMode!=='confirm') return; // no pin during feedback/results
+  const lat=e.latlng.lat, lon=e.latlng.lng;
   if(!provisional){
-    const marker=L.circleMarker([lat,lng],{renderer:svgRenderer,updateWhenZooming:true,radius:7,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.5})
-      .bindTooltip('Your pin (click Confirm)',{direction:'top'}).addTo(map);
-    provisional={lat,lon:lng,marker};
+    const marker=L.circleMarker([lat,lon],{
+      radius:7, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.5
+    }).bindTooltip('Your pin (click Confirm)', {direction:'top'});
+    marker.addTo(map);
+    provisional = {lat, lon, marker};
   }else{
-    provisional.lat=lat; provisional.lon=lng;
-    provisional.marker.setLatLng([lat,lng]);
+    provisional.lat = lat; provisional.lon = lon;
+    provisional.marker.setLatLng([lat,lon]);
   }
 });
 
-/* ===== Game flow ===== */
+/* ========= Game flow ========= */
 function startRound(){
   if(!allCities.length){ alert('Dataset not loaded yet.'); return; }
   const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
@@ -293,35 +378,45 @@ function startRound(){
   let minPop = diffSel==="custom" ? parseInt(document.getElementById('customMinPop').value||'10000',10) : parseInt(diffSel,10);
   if(!Number.isFinite(minPop) || minPop<1) minPop=10000;
 
-  const pool=allCities.filter(c=>(c.pop??0)>=minPop);
-  if(pool.length<num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
+  const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
+  if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  const idx=[...pool.keys()];
-  for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
-  roundCities=idx.slice(0,num).map(i=>pool[i]);
+  // Shuffle and pick
+  const idxs=[...pool.keys()];
+  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
+  roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
+  // Reset round state
   clearResultLayers(); guesses=[]; totalErrorKm=0; currentIndex=-1; updateScoreBox();
   setTopCity(null); hideFeedbackUI(); actionMode='confirm'; confirmBtn.textContent='Confirm';
   resetMapView();
+
+  // First city immediately
   nextCity();
 }
 function nextCity(){
-  currentIndex++; actionMode='confirm'; confirmBtn.textContent='Confirm'; hideFeedbackUI(); resetMapView();
-  if(currentIndex>=roundCities.length){ setTopRoundSummary(); return; }
-  const city=roundCities[currentIndex];
-  setTopCity(city); updateScoreBox();
+  currentIndex++;
+  actionMode='confirm'; confirmBtn.textContent='Confirm';
+  hideFeedbackUI();
+  resetMapView();
+
+  if(currentIndex>=roundCities.length){
+    setTopRoundSummary();
+    return;
+  }
+  const city = roundCities[currentIndex];
+  setTopCity(city);
+  updateScoreBox();
+  prefetchWiki(city);
 }
 
-/* ===== Confirm / Next / Results / Restart ===== */
+/* ========= Confirm / Next / Results / Restart ========= */
 async function confirmOrNext(){
   if(actionMode==='next'){ nextCity(); return; }
   if(actionMode==='results'){ showRoundResults(); return; }
   if(actionMode==='restart'){ startRound(); return; }
   await confirmGuess();
 }
-confirmBtn.addEventListener('click', confirmOrNext);
-
-/* ===== Confirm logic with smooth camera, instant overlays ===== */
 async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
@@ -331,132 +426,166 @@ async function confirmGuess(){
   const trueLat=c.lat, trueLon=c.lon;
   const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
 
-  // record + UI
+  // Record for results
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm});
   totalErrorKm+=dKm; updateScoreBox();
-  if(provisional.marker){ map.removeLayer(provisional.marker); }
-  provisional=null;
 
+  // --- FEEDBACK VIEW: draw current city's layers + zoom in + labels ---
+  if(provisional.marker){ map.removeLayer(provisional.marker); }
+  const guessMarker=L.circleMarker([guessLat,guessLon],{
+    radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
+  }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+
+  const trueMarker=L.circleMarker([trueLat,trueLon],{
+    radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
+  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
+
+  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{
+    weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
+  }).addTo(map);
+
+  feedbackLayers.push(guessMarker,trueMarker,line);
+  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+  map.setView([trueLat,trueLon], 9, { animate:true });
+
+  // Sidebar + title feedback
   setTopDistance(dKm);
   showFeedbackUI();
-  // Load Wikipedia now (no prefetch to keep startup fast)
-  populateWiki(c).catch(()=>{});
+  populateWikiFromCache(c);
 
-  // Labels on
-  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
-
-  // Smooth camera: fit both (if needed), then fly to true city
-  const guessPt=[guessLat,guessLon], truePt=[trueLat,trueLon];
-  const bothVisible = map.getBounds().contains(guessPt) && map.getBounds().contains(truePt);
-
-  async function flyToBoundsIfNeeded(){
-    if(bothVisible) return;
-    await new Promise(res=>{
-      map.flyToBounds(L.latLngBounds([guessPt,truePt]).pad(0.25), {animate:true,duration:0.9,padding:[80,80]});
-      map.once('moveend', res);
-    });
-  }
-  async function flyToTrue(){
-    await new Promise(res=>{
-      map.flyTo(truePt, 9, {animate:true, duration:1.0});
-      map.once('moveend', res);
-    });
-  }
-
-  // Run flights, then add crisp vectors at final zoom
-  await flyToBoundsIfNeeded();
-  await flyToTrue();
-
-  // Instant overlays (now that the camera is settled — no zoom scaling artifacts)
-  const guessMarker=L.circleMarker(guessPt,{renderer:svgRenderer,updateWhenZooming:true,radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
-    .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
-  const trueMarker=L.circleMarker(truePt,{renderer:svgRenderer,updateWhenZooming:true,radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
-    .bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
-  const line=L.polyline([guessPt,truePt],{renderer:svgRenderer,updateWhenZooming:true,weight:2.5,color:'#f59e0b',opacity:.95,dashArray:'4,4'}).addTo(map);
-  feedbackLayers.push(guessMarker,trueMarker,line);
-
-  // Button state
+  // Button state: Next city or See results if last
   const isLast = (currentIndex === roundCities.length - 1);
   actionMode = isLast ? 'results' : 'next';
   confirmBtn.textContent = isLast ? 'See results' : 'Next city';
 }
+confirmBtn.addEventListener('click', confirmOrNext);
 
-/* ===== Results ===== */
+function populateWikiFromCache(city){
+  const info = wikiCache.get(cityKey(city));
+  const wikiTitle = document.getElementById('wikiTitle');
+  const wikiExtract = document.getElementById('wikiExtract');
+  const wikiLink = document.getElementById('wikiLink');
+  const wikiActions = document.getElementById('wikiActions');
+  const wikiImg = document.getElementById('wikiImg');
+
+  if(!info){
+    wikiTitle.textContent = cityLabel(city);
+    wikiExtract.textContent = 'Loading…';
+    wikiImg.style.display='none'; wikiImg.removeAttribute('src');
+    wikiActions.style.display='none';
+    return;
+  }
+  wikiTitle.textContent = info.title || cityLabel(city);
+  wikiExtract.textContent = info.extract || 'No summary available.';
+  if(info.imgSrc){ wikiImg.src = info.imgSrc; wikiImg.style.display='block'; }
+  else { wikiImg.style.display='none'; wikiImg.removeAttribute('src'); }
+  if(info.pageUrl){ wikiLink.href = info.pageUrl; wikiActions.style.display='flex'; }
+  else { wikiActions.style.display='none'; }
+}
+
+/* ========= Results view ========= */
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — Total error ${fmtKm(totalErrorKm)}</span>`; }
 function showRoundResults(){
   hideFeedbackUI();
-  clearFeedbackLayers();
+  clearFeedbackLayers(); // remove current city's overlays
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
   fitToAllGuesses();
   setTopRoundSummary();
-  actionMode='restart';
-  confirmBtn.textContent='Start new round';
+  actionMode = 'restart';
+  confirmBtn.textContent = 'Start new round';
 }
 
-/* ===== Data loading ===== */
+/* ========= Data loading ========= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
 function parseAdmin1(text){
-  const map={}; text.split(/\r?\n/).forEach(line=>{
-    if(!line || !line.includes('\t')) return;
-    const [key,name]=line.split('\t');
-    if(key && name) map[key.trim()]=name.trim();
-  }); return map;
+  const map = {};
+  const lines = text.split(/\r?\n/);
+  for(const line of lines){
+    if(!line || !line.includes('\t')) continue;
+    const parts = line.split('\t');
+    const key = parts[0]?.trim();   // e.g., "US.CA"
+    const name = parts[1]?.trim();  // "California"
+    if(key && name) map[key] = name;
+  }
+  return map;
 }
 function extractSubdivision(row){
-  const cc=(row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
-  const a1=(row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
+  const cc = (row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
+  const a1 = (row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
   if(cc && a1){
-    const k=`${cc}.${a1}`; if(adminMap[k]) return adminMap[k];
+    const key = `${cc}.${a1}`;
+    if(adminMap[key]) return adminMap[key];
   }
-  const labelEn=row['LABEL EN'] ?? null;
-  const countryName=row['Country name EN'] ?? null;
+  const labelEn = row['LABEL EN'] ?? null;
+  const countryName = row['Country name EN'] ?? null;
   if(labelEn){
-    const parts=labelEn.split(',').map(s=>s.trim()).filter(Boolean);
-    if(parts.length>=3){ const penultimate=parts[parts.length-2]; return penultimate || null; }
+    const parts = labelEn.split(',').map(s=>s.trim()).filter(Boolean);
+    if(parts.length >= 3){
+      const last = parts[parts.length-1];
+      const penultimate = parts[parts.length-2];
+      return penultimate || null;
+    }
   }
   return null;
 }
 function parseRowsToCities(rows){
   const out=[];
   for(const r of rows){
-    const name=(r.name ?? r.city ?? r.City ?? r.Name ?? r['ASCII Name'] ?? '').toString().trim();
+    const name = (r.name ?? r.city ?? r.City ?? r.Name ?? r['ASCII Name'] ?? '').toString().trim();
     if(!name) continue;
-    const popNum=parseInt(r.Population ?? r.population ?? r.pop ?? r['Population '],10);
-    const latNum=parseFloat(r.lat ?? r.latitude ?? r.Lat ?? r.Latitude);
-    const lonNum=parseFloat(r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude);
-    if(!isFinite(latNum)||!isFinite(lonNum)) continue;
-    const sub=extractSubdivision(r);
-    const country=(r['Country name EN'] ?? '').toString().trim() || null;
-    out.push({name,lat:latNum,lon:lonNum,pop:Number.isFinite(popNum)?popNum:null,sub,country});
+
+    let pop = r.Population ?? r.population ?? r.pop ?? r['Population '];
+    const popNum = parseInt(pop, 10);
+    const finalPop = Number.isFinite(popNum) ? popNum : null;
+
+    let lat = r.lat ?? r.latitude ?? r.Lat ?? r.Latitude;
+    let lon = r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude;
+    if ((lat==null || lon==null) && (r.Coordinates!=null || r['Coordinates ']!=null)) {
+      const coordStr = (r.Coordinates ?? r['Coordinates ']).toString();
+      const parts = coordStr.split(',', 2);
+      if (parts.length === 2) { lat = parts[0].trim(); lon = parts[1].trim(); }
+    }
+    const latNum = parseFloat(lat), lonNum = parseFloat(lon);
+    if(!isFinite(latNum) || !isFinite(lonNum)) continue;
+
+    const sub = extractSubdivision(r);
+    const country = (r['Country name EN'] ?? '').toString().trim() || null;
+
+    out.push({ name, lat: latNum, lon: lonNum, pop: finalPop, sub, country });
   }
   return out;
 }
 function loadCSV(url){
   Papa.parse(url,{
     download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
-    complete: (res)=>{
-      const cities=parseRowsToCities(res.data);
+    complete: function(res){
+      const cities = parseRowsToCities(res.data);
       if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
-      allCities=cities; startRound(); // auto-start
+      allCities = cities;
+      // Auto-start immediately
+      startRound();
     },
-    error: (err)=>{ console.error(err); alert('Error loading dataset.'); }
+    error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
 }
 async function boot(){
   try{
-    const resp=await fetch('admin1CodesASCII.txt');
-    if(resp.ok){ adminMap=parseAdmin1(await resp.text()); }
-  }catch(e){}
+    const resp = await fetch('admin1CodesASCII.txt');
+    if(resp.ok){ adminMap = parseAdmin1(await resp.text()); }
+  }catch(e){ /* continue without subdivisions */ }
   loadCSV('geonames_10k.csv');
 }
 window.addEventListener('DOMContentLoaded', boot);
 
-/* ===== Controls ===== */
+/* ========= Controls ========= */
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
-  clearFeedbackLayers(); clearResultLayers();
+  // Clear overlays, keep current round
+  clearFeedbackLayers();
+  clearResultLayers();
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
-  map.flyTo(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true, duration:0.9});
+  resetMapView();
 });
 </script>
 </body>
