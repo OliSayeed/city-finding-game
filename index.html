@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>City Guessing Map — City + Subdivision</title>
+<title>City finding game</title>
 
 <!-- Leaflet -->
 <link
@@ -35,37 +35,36 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
-  /* Top bar (prominent current city + Confirm) */
+  /* Top bar (centered city + Confirm) */
   .topbar {
     position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
     background: #0e1117; border-bottom: 1px solid var(--border);
-    display: grid; grid-template-columns: 1fr auto; align-items: center;
-    padding: 12px 18px; gap: 12px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 10px 12px; gap: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.35);
   }
+  .spacer-left, .spacer-right { display:flex; align-items:center; gap:8px; }
+  .spacer-left { justify-content:flex-start; }
+  .spacer-right { justify-content:flex-end; }
   .current-city {
-    font-size: 24px; font-weight: 800; letter-spacing: .2px;
+    text-align: center; font-size: 22px; font-weight: 800; letter-spacing: .2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .current-city .cty { color: #fff; }
   .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
-  .topbar-right { display: flex; gap: 8px; align-items: center; }
+
   .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
     background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
     font-weight: 600; letter-spacing: .2px; }
   .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
   .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
-  .pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 6px 10px; border-radius: 999px;
-    background: #121722; border: 1px solid var(--border); color: var(--muted); }
-  .pill .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
-  .pill .dot.guess { background: var(--accent); } .pill .dot.true { background: var(--good); } .pill .dot.line { background: var(--mid); }
 
-  /* Two-column layout below the topbar */
+  /* Layout below the topbar */
   .app {
     display: grid;
     grid-template-columns: 380px 1fr;
-    grid-template-rows: calc(100vh - 60px);
-    margin-top: 60px; /* height of topbar */
+    grid-template-rows: calc(100vh - 56px);
+    margin-top: 56px; /* height of topbar */
   }
   .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
   .section { padding: 16px 18px; border-bottom: 1px solid var(--border); }
@@ -78,63 +77,68 @@
     border-radius: 10px; color: var(--text);
   }
   .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
-  #map { height: calc(100vh - 60px); width: 100%; }
+
+  #map { height: calc(100vh - 56px); width: 100%; }
 
   .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
   .scorecard .big { font-size: 22px; font-weight: 700; }
 
-  .list { display: grid; gap: 6px; margin-top: 8px; max-height: 28vh; overflow: auto; }
-  .cityitem { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: #0d0f13; font-size: 14px;
-    display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
-  .cityitem .badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: #0b0d12; }
-  .cityitem.done { opacity: .75; }
-
-  .radio-group { display: grid; gap: 6px; margin-top: 8px; }
-  .radio-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-  .radio-item input { width: 16px; height: 16px; }
+  /* Wikipedia panel */
+  .wiki-panel {
+    position: fixed; z-index: 1100; right: 16px; bottom: 16px; width: min(420px, 92vw);
+    background: #0d0f13; border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    display: none;
+  }
+  .wiki-panel.open { display: block; }
+  .wiki-title { font-weight: 700; margin: 0 0 4px; font-size: 16px; }
+  .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .wiki-actions { margin-top: 8px; display: flex; gap: 8px; }
+  .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
+  .wiki-close { margin-left: auto; }
 
   @media (max-width: 1000px) {
     .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
     #map { height: calc(70vh); }
-    .current-city { font-size: 20px; }
+    .current-city { font-size: 18px; }
   }
 </style>
 </head>
 <body>
 
-<!-- Prominent current-city bar -->
+<!-- Centered current-city bar -->
 <div class="topbar">
-  <div class="current-city" id="currentCityTop">Loading cities…</div>
-  <div class="topbar-right">
-    <button id="confirmBtn" class="btn accent" title="Confirm your current pin for this city">Confirm</button>
-    <span class="pill"><span class="dot guess"></span>&nbsp;Your pin</span>
+  <div class="spacer-left">
+    <button id="confirmBtn" class="btn accent" title="Confirm your current pin">Confirm</button>
   </div>
+  <div class="current-city" id="currentCityTop">City finding game</div>
+  <div class="spacer-right"></div>
 </div>
 
 <div class="app">
   <aside class="sidebar">
     <div class="section">
-      <h1>City Guessing Map</h1>
-      <div class="muted">We preload a big list of cities (≥10k pop). Click the map to drop a pin for the city shown at the top, then hit <b>Confirm</b>.</div>
+      <h1>City finding game</h1>
+      <div class="muted">Pick a difficulty and start a round.</div>
     </div>
 
     <div class="section controls">
       <label>Difficulty (population threshold)</label>
-      <div class="radio-group" id="difficultyGroup">
-        <label class="radio-item">
+      <div class="radio-group" id="difficultyGroup" style="display:grid;gap:6px;margin-top:8px;">
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
           <input type="radio" name="difficulty" value="1000000">
           <span>≥ 1,000,000</span>
         </label>
-        <label class="radio-item">
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
           <input type="radio" name="difficulty" value="100000" checked>
           <span>≥ 100,000</span>
         </label>
-        <label class="radio-item">
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
           <input type="radio" name="difficulty" value="10000">
           <span>≥ 10,000</span>
         </label>
-        <label class="radio-item">
+        <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
           <input type="radio" name="difficulty" value="custom" id="diffCustom">
           <span>Custom ≥</span>
           <input id="customMinPop" type="number" min="1" step="1000" value="10000" style="max-width:120px;">
@@ -146,117 +150,110 @@
           <label>Number per round</label>
           <input id="numPerRound" type="number" min="1" max="200" step="1" value="10" />
         </div>
-        <div>
-          <label class="radio-item"><input id="hideTrueUntilEnd" type="checkbox" checked /> Hide true locations until end</label>
-        </div>
       </div>
 
       <div class="btnbar" style="margin-top:10px;">
         <button id="startBtn" class="btn accent">Start New Round</button>
         <button id="resetBtn" class="btn">Clear Map</button>
       </div>
-      <div class="muted" style="margin-top:8px;">Basemap has no labels. Distances are great-circle.</div>
     </div>
 
     <div class="section">
-      <h1>Round Status</h1>
+      <h1>Round status</h1>
       <div class="scorebox" style="margin-bottom:10px;">
         <div class="scorecard"><div class="muted">Guessed</div><div id="guessedCount" class="big">0</div></div>
         <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
-        <div class="scorecard"><div class="muted">Total Error</div><div id="totalError" class="big">0 km</div></div>
+        <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
       </div>
-      <div id="currentPrompt" class="pill" style="margin-bottom:10px;">No round yet.</div>
-      <div id="cityList" class="list"></div>
-      <div id="summary" class="list" style="margin-top:10px;"></div>
+      <div id="summary" style="margin-top:10px;"></div>
     </div>
   </aside>
 
   <div id="map"></div>
 </div>
 
-<script>
-/* ========= Seedless RNG (we just use Math.random) ========= */
+<!-- Wikipedia panel -->
+<div id="wikiPanel" class="wiki-panel">
+  <div style="display:flex;gap:8px;align-items:center;">
+    <div class="wiki-title" id="wikiTitle">Wikipedia</div>
+    <button class="btn wiki-close" id="wikiClose">Close</button>
+  </div>
+  <div class="wiki-extract" id="wikiExtract">Loading…</div>
+  <div class="wiki-actions" id="wikiActions" style="display:none;">
+    <a id="wikiLink" target="_blank" rel="noopener">Open on Wikipedia</a>
+  </div>
+</div>
 
+<script>
 /* ========= Distance (km) ========= */
 function haversineKm(lat1,lon1,lat2,lon2){
   const R=6371,toRad=d=>d*Math.PI/180;
-  const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
-  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-  return 2*R*Math.asin(Math.sqrt(a));
+  const dLat=toRad(lat2-lat1),dLon=toRad(lat2-lon1);
+  return 2*R*Math.asin(Math.sqrt(Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2));
 }
 
 /* ========= Map ========= */
 const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
-L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''}); // transparent labels overlay
 map.setMaxBounds([[-85,-200],[85,200]]);
 
 /* ========= State ========= */
 let adminMap = {}; // "CC.Admin1Code" -> Subdivision name
-let allCities=[];   // [{name, lat, lon, pop, sub, cc, a1}]
+let allCities=[];   // [{name, lat, lon, pop, sub, country}]
 let roundCities=[]; let currentIndex=-1;
-let guesses=[]; let totalErrorKm=0; let hideTrueUntilEnd=true;
+let guesses=[]; let totalErrorKm=0;
 
 let provisional = null; // {lat, lon, marker}
 
-const cityListEl=document.getElementById('cityList');
 const summaryEl=document.getElementById('summary');
-const currentPromptEl=document.getElementById('currentPrompt');
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 const currentCityTopEl=document.getElementById('currentCityTop');
 
+/* ========= UI helpers ========= */
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
-
-function setTopAndPrompt(cityObj){
+function setTop(cityObj){
   if(!cityObj){
-    currentCityTopEl.textContent='No round yet.';
-    currentPromptEl.textContent='No round yet.';
+    currentCityTopEl.textContent='City finding game';
     return;
   }
   currentCityTopEl.innerHTML = `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}`;
-  currentPromptEl.textContent = `Click the map to place a pin for: ${cityLabel(cityObj)}. Then press Confirm.`;
 }
-
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
   totalErrorEl.textContent=fmtKm(totalErrorKm);
 }
-
-function renderCityList(){
-  cityListEl.innerHTML='';
-  roundCities.forEach((c,idx)=>{
-    const div=document.createElement('div');
-    div.className='cityitem'+(idx<guesses.length?' done':'');
-    const lab = idx<guesses.length?'guessed':(idx===guesses.length?'current':'pending');
-    const popStr = c.pop!=null ? (c.pop.toLocaleString?.() || c.pop) : '?';
-    div.innerHTML=`<div>${cityLabel(c)} <span class="muted" style="font-size:12px;">(${popStr})</span></div><div class="badge">${lab}</div>`;
-    cityListEl.appendChild(div);
-  });
-}
-
 function renderSummary(){
   summaryEl.innerHTML='';
   if(guesses.length!==roundCities.length) return;
-  const header=document.createElement('div'); header.className='cityitem';
-  header.innerHTML=`<div><strong>Round Summary</strong></div><div class="badge">Total: ${fmtKm(totalErrorKm)}</div>`;
-  summaryEl.appendChild(header);
+  const wrap=document.createElement('div');
+  wrap.style.display='grid'; wrap.style.gap='6px';
+  const header=document.createElement('div');
+  header.style.padding='8px 10px'; header.style.border='1px solid var(--border)';
+  header.style.borderRadius='10px'; header.style.background='#0d0f13';
+  header.innerHTML=`<div><strong>Round summary</strong></div><div class="muted">Total error: ${fmtKm(totalErrorKm)}</div>`;
+  wrap.appendChild(header);
   guesses.map(g=>({name:cityLabel(g.city),dist:g.distKm}))
          .sort((a,b)=>b.dist-a.dist)
          .forEach(r=>{
-           const row=document.createElement('div'); row.className='cityitem';
-           row.innerHTML=`<div>${r.name}</div><div class="badge">${fmtKm(r.dist)}</div>`;
-           summaryEl.appendChild(row);
+           const row=document.createElement('div');
+           row.style.padding='8px 10px'; row.style.border='1px solid var(--border)';
+           row.style.borderRadius='10px'; row.style.background='#0d0f13';
+           row.innerHTML=`<div>${r.name}</div><div class="muted">${fmtKm(r.dist)}</div>`;
+           wrap.appendChild(row);
          });
+  summaryEl.appendChild(wrap);
 }
 
+/* ========= Provisional pin handling ========= */
 function clearProvisional(){
   if(provisional && provisional.marker){ map.removeLayer(provisional.marker); }
   provisional = null;
 }
-
 function clearMapLayers(){
   guesses.forEach(g=>{
     if(g.layers){
@@ -266,13 +263,15 @@ function clearMapLayers(){
     }
   });
   clearProvisional();
+  // Remove labels overlay between questions
+  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 }
-
 function resetRoundUI(){
   guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();
   clearProvisional();
 }
 
+/* ========= Game flow ========= */
 function startRound(){
   if(!allCities.length){ alert('Dataset not loaded yet.'); return; }
   const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
@@ -283,44 +282,35 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Shuffle pool with Fisher–Yates
+  // Shuffle with Fisher–Yates
   const idxs=[...pool.keys()];
-  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
+  for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j]]=[idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
-  clearMapLayers(); resetRoundUI(); renderCityList(); nextCity();
+  clearMapLayers(); resetRoundUI(); nextCity();
 }
-
 function nextCity(){
   currentIndex++;
   clearProvisional();
+  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 
   if(currentIndex>=roundCities.length){
     currentCityTopEl.textContent='Round complete!';
-    currentPromptEl.textContent='Round complete! Review your results below.';
     renderSummary();
-    if(hideTrueUntilEnd){
-      guesses.forEach(g=>{
-        if(g.layers && g.layers.trueMarker && !map.hasLayer(g.layers.trueMarker)){
-          map.addLayer(g.layers.trueMarker); map.addLayer(g.layers.line);
-        }
-      });
-    }
     return;
   }
-  setTopAndPrompt(roundCities[currentIndex]);
-  updateScoreBox(); renderCityList();
+  setTop(roundCities[currentIndex]);
+  updateScoreBox();
 }
 
-/* ========= Click to place/move a provisional pin ========= */
+/* ========= Map clicks ========= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const lat=e.latlng.lat, lon=e.latlng.lng;
-
   if(!provisional){
     const marker=L.circleMarker([lat,lon],{
       radius:7, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.5
-    }).bindTooltip('Your pin (click Confirm to submit)', {direction:'top'});
+    }).bindTooltip('Your pin (click Confirm)', {direction:'top'});
     marker.addTo(map);
     provisional = {lat, lon, marker};
   }else{
@@ -329,21 +319,17 @@ map.on('click',(e)=>{
   }
 });
 
-/* ========= Confirm current pin (advance) ========= */
-function confirmGuess(){
+/* ========= Confirm ========= */
+async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
-
-  if(!provisional){
-    alert('Place a pin on the map first, then press Confirm.');
-    return;
-  }
+  if(!provisional){ alert('Place a pin on the map first, then press Confirm.'); return; }
 
   const guessLat=provisional.lat, guessLon=provisional.lon;
   const trueLat=c.lat, trueLon=c.lon;
   const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
 
-  // Freeze the guess marker (make a permanent one), and clear provisional
+  // Freeze guess marker, clear provisional
   if(provisional.marker){ map.removeLayer(provisional.marker); }
   const guessMarker=L.circleMarker([guessLat,guessLon],{
     radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
@@ -351,25 +337,72 @@ function confirmGuess(){
 
   const trueMarker=L.circleMarker([trueLat,trueLon],{
     radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
-  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'});
+  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
 
   const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{
     weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
-  });
+  }).addTo(map);
 
-  if(!hideTrueUntilEnd){ trueMarker.addTo(map); line.addTo(map); }
+  // Feedback: add labels overlay and zoom to the true city
+  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+  map.setView([trueLat,trueLon], 8, { animate:true });
+
+  // Wikipedia panel
+  openWikiPanel(c);
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
-  totalErrorKm+=dKm; updateScoreBox(); renderCityList();
+  totalErrorKm+=dKm; updateScoreBox();
 
-  provisional = null;
-  nextCity();
+  // Move on after panel interaction or next Confirm press for next city
+  // We'll advance to next city on next Confirm if the user hasn't moved the pin again.
+  // For clarity and control, let's advance immediately after showing feedback:
+  setTimeout(nextCity, 1200); // brief pause so they see the feedback
+}
+
+/* ========= Wikipedia panel ========= */
+const wikiPanel = document.getElementById('wikiPanel');
+const wikiTitle = document.getElementById('wikiTitle');
+const wikiExtract = document.getElementById('wikiExtract');
+const wikiLink = document.getElementById('wikiLink');
+const wikiActions = document.getElementById('wikiActions');
+document.getElementById('wikiClose').addEventListener('click', ()=>{ wikiPanel.classList.remove('open'); });
+
+async function openWikiPanel(city){
+  wikiTitle.textContent = cityLabel(city);
+  wikiExtract.textContent = 'Loading…';
+  wikiActions.style.display='none';
+  wikiPanel.classList.add('open');
+
+  const candidates = [];
+  if(city.sub && city.country){ candidates.push(`${city.name}, ${city.sub}, ${city.country}`); }
+  if(city.sub){ candidates.push(`${city.name}, ${city.sub}`); }
+  if(city.country){ candidates.push(`${city.name}, ${city.country}`); }
+  candidates.push(city.name);
+
+  for(const t of candidates){
+    try{
+      const title = encodeURIComponent(t.replace(/\s+/g,'_'));
+      const resp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`);
+      if(resp.ok){
+        const data = await resp.json();
+        wikiTitle.textContent = data.title || cityLabel(city);
+        wikiExtract.textContent = data.extract || 'No summary available.';
+        if(data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page){
+          wikiLink.href = data.content_urls.desktop.page;
+          wikiActions.style.display='flex';
+        }else{
+          wikiActions.style.display='none';
+        }
+        return;
+      }
+    }catch(e){ /* try next candidate */ }
+  }
+  wikiExtract.textContent = 'No summary found on Wikipedia.';
+  wikiActions.style.display='none';
 }
 
 /* ========= Data loading ========= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
-
-/* Parse admin1CodesASCII.txt -> { "CC.Code": "Subdivision Name" } */
 function parseAdmin1(text){
   const map = {};
   const lines = text.split(/\r?\n/);
@@ -382,9 +415,7 @@ function parseAdmin1(text){
   }
   return map;
 }
-
-/* Extract subdivision via mapping; fallback to LABEL EN heuristic */
-function extractSubdivision(row, adminMap){
+function extractSubdivision(row){
   const cc = (row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
   const a1 = (row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
   if(cc && a1){
@@ -406,9 +437,8 @@ function extractSubdivision(row, adminMap){
   }
   return null;
 }
-
 function parseRowsToCities(rows){
-  const parsed=[];
+  const out=[];
   for(const r of rows){
     const name = (r.name ?? r.city ?? r.City ?? r.Name ?? r['ASCII Name'] ?? '').toString().trim();
     if(!name) continue;
@@ -428,12 +458,13 @@ function parseRowsToCities(rows){
     const lonNum = parseFloat(lon);
     if(!isFinite(latNum) || !isFinite(lonNum)) continue;
 
-    const sub = extractSubdivision(r, adminMap);
-    parsed.push({ name, lat: latNum, lon: lonNum, pop: finalPop, sub });
-  }
-  return parsed;
-}
+    const sub = extractSubdivision(r);
+    const country = (r['Country name EN'] ?? '').toString().trim() || null;
 
+    out.push({ name, lat: latNum, lon: lonNum, pop: finalPop, sub, country });
+  }
+  return out;
+}
 function loadCSV(url){
   Papa.parse(url,{
     download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
@@ -441,38 +472,30 @@ function loadCSV(url){
       const cities = parseRowsToCities(res.data);
       if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
       allCities = cities;
-      currentCityTopEl.textContent = 'Dataset loaded. Choose difficulty, press Start, then click the map and Confirm.';
-      currentPromptEl.textContent = 'Dataset loaded. Choose difficulty, press Start, then click the map and Confirm.';
+      currentCityTopEl.textContent = 'City finding game';
     },
     error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
 }
-
 async function boot(){
-  // Load admin map
   try{
-    const txt = await (await fetch('admin1CodesASCII.txt')).text();
-    adminMap = parseAdmin1(txt);
-  }catch(e){
-    console.error('Failed to load admin1CodesASCII.txt', e);
-    adminMap = {};
-  }
-  // Load city CSV (≥10k)
+    const resp = await fetch('admin1CodesASCII.txt');
+    if(resp.ok){ adminMap = parseAdmin1(await resp.text()); }
+  }catch(e){ /* continue without subdivisions */ }
   loadCSV('geonames_10k.csv');
 }
-
 window.addEventListener('DOMContentLoaded', boot);
 
 /* ========= Controls ========= */
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
-  clearMapLayers(); resetRoundUI(); renderCityList();
-  currentCityTopEl.textContent = 'Map cleared. Start a new round to play again.';
-  currentPromptEl.textContent = 'Map cleared. Start a new round to play again.';
+  clearMapLayers(); resetRoundUI();
+  currentCityTopEl.textContent = 'City finding game';
+  // Hide wiki + remove labels overlay
+  wikiPanel.classList.remove('open');
+  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 });
 document.getElementById('confirmBtn').addEventListener('click', confirmGuess);
-document.getElementById('hideTrueUntilEnd').addEventListener('change',(e)=>{ hideTrueUntilEnd=e.currentTarget.checked; });
-hideTrueUntilEnd=document.getElementById('hideTrueUntilEnd').checked;
 </script>
 </body>
 </html>
