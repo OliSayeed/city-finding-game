@@ -198,16 +198,28 @@ function haversineKm(lat1,lon1,lat2,lon2){
 }
 
 /* ========= Map ========= */
-const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
+const map=L.map('map',{
+  minZoom:1.5,
+  worldCopyJump:true,
+  attributionControl:true,
+  zoomAnimation:true,
+  zoomAnimationThreshold: 4,   // keep animation smooth
+  preferCanvas: false          // ensure SVG renderer is used for crisp vectors
+}).setView([20,0],2);
+
 const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
 const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
 map.setMaxBounds([[-85,-200],[85,200]]);
 
 const WORLD_VIEW = { center: [20,0], zoom: 2 };
 
+/* --- Shared crisp SVG renderer (prevents pixellated scaling during zoom) --- */
+const svgRenderer = L.svg({ padding: 0.5 });
+svgRenderer.addTo(map); // attach to map so layers use it
+
 /* ========= State ========= */
-let adminMap = {}; // "CC.Admin1Code" -> Subdivision name
-let allCities=[];   // [{name, lat, lon, pop, sub, country}]
+let adminMap = {};
+let allCities=[];
 let roundCities=[]; let currentIndex=-1;
 let guesses=[]; let totalErrorKm=0;
 
@@ -226,6 +238,7 @@ const totalErrorEl=document.getElementById('totalError');
 /* Feedback layers (only for current city) */
 let feedbackLayers = [];
 let animMarker = null;
+let animatedLine = null;
 
 /* Results layers (entire round) */
 let resultLayers = [];
@@ -233,7 +246,6 @@ let resultLayers = [];
 /* ========= Wikipedia prefetch cache + robust fetch (redirects/diacritics) ========= */
 const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
-
 function wikiCandidates(city){
   const arr=[];
   if(city.sub && city.country){ arr.push(`${city.name}, ${city.sub}, ${city.country}`); }
@@ -292,7 +304,7 @@ function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) retu
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary — ${fmtKm(totalErrorKm)}</span>`; }
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; }  /* removed 'Total error …' */
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
@@ -321,6 +333,7 @@ function clearFeedbackLayers(){
   feedbackLayers.forEach(l => map.removeLayer(l));
   feedbackLayers = [];
   if(animMarker){ map.removeLayer(animMarker); animMarker = null; }
+  if(animatedLine){ map.removeLayer(animatedLine); animatedLine = null; }
 }
 function fitToAllGuesses(){
   const pts=[];
@@ -342,12 +355,15 @@ function drawResultsLayers(){
   clearResultLayers();
   guesses.forEach(g=>{
     const guessMarker=L.circleMarker([g.guessLat,g.guessLon],{
+      renderer: svgRenderer, updateWhenZooming:true,
       radius:5, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.35
     }).bindTooltip(`Your guess — ${fmtKm(g.distKm)}`,{direction:'top'});
     const trueMarker=L.circleMarker([g.trueLat,g.trueLon],{
+      renderer: svgRenderer, updateWhenZooming:true,
       radius:5, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
     }).bindTooltip(`${cityLabel(g.city)} — true`,{direction:'top'});
     const line=L.polyline([[g.guessLat,g.guessLon],[g.trueLat,g.trueLon]],{
+      renderer: svgRenderer, updateWhenZooming:true,
       weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
     });
     guessMarker.addTo(map); trueMarker.addTo(map); line.addTo(map);
@@ -362,6 +378,7 @@ map.on('click',(e)=>{
   const lat=e.latlng.lat, lon=e.latlng.lng;
   if(!provisional){
     const marker=L.circleMarker([lat,lon],{
+      renderer: svgRenderer, updateWhenZooming:true,
       radius:7, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.5
     }).bindTooltip('Your pin (click Confirm)', {direction:'top'});
     marker.addTo(map);
@@ -420,13 +437,13 @@ async function confirmOrNext(){
   await confirmGuess();
 }
 
-/* ====== Smooth fly + animated line from guess to true ====== */
+/* ====== Smooth fly + animated line from guess to true (crisp with SVG renderer) ====== */
 function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
 function lerp(a,b,t){ return a + (b-a)*t; }
 function lerpLatLng(a,b,t){ return [ lerp(a[0],b[0],t), lerp(a[1],b[1],t) ]; }
 
 async function smoothReveal(guess, truth){
-  // Step 1: ensure both points are visible (if needed)
+  // Step 1: ensure both points visible
   const bounds = L.latLngBounds([guess, truth]).pad(0.25);
   const bothVisible = map.getBounds().contains(guess) && map.getBounds().contains(truth);
   if(!bothVisible){
@@ -439,13 +456,8 @@ async function smoothReveal(guess, truth){
   // Step 2: fly to true location while animating the line head
   const duration = 1200; // ms
   const start = performance.now();
-  const startZoom = map.getZoom();
-  const targetZoom = 9;
+  map.flyTo(truth, 9, {animate:true, duration: duration/1000});
 
-  // Kick off camera
-  map.flyTo(truth, targetZoom, {animate:true, duration: duration/1000});
-
-  // Animate line head dot + polyline growth
   return new Promise(res=>{
     function step(ts){
       const t = Math.min(1, (ts - start)/duration);
@@ -454,16 +466,11 @@ async function smoothReveal(guess, truth){
       animMarker.setLatLng(cur);
       animatedLine.setLatLngs([guess, cur]);
       if(t<1){ requestAnimationFrame(step); }
-      else {
-        animatedLine.setLatLngs([guess, truth]);
-        res();
-      }
+      else { animatedLine.setLatLngs([guess, truth]); res(); }
     }
     requestAnimationFrame(step);
   });
 }
-
-let animatedLine = null;
 
 async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
@@ -478,24 +485,28 @@ async function confirmGuess(){
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Build feedback layers: static markers + animated head + growing line
+  // Feedback layers (crisp SVG, redraw during zoom)
   if(provisional.marker){ map.removeLayer(provisional.marker); }
   const guessPt = [guessLat, guessLon];
   const truePt  = [trueLat, trueLon];
 
   const guessMarker=L.circleMarker(guessPt,{
+    renderer: svgRenderer, updateWhenZooming:true,
     radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
   }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
 
   const trueMarker=L.circleMarker(truePt,{
+    renderer: svgRenderer, updateWhenZooming:true,
     radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
   }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
 
   animatedLine = L.polyline([guessPt, guessPt],{
+    renderer: svgRenderer, updateWhenZooming:true,
     weight:2.5, color:'#f59e0b', opacity:.95, dashArray:'4,4'
   }).addTo(map);
 
   animMarker = L.circleMarker(guessPt,{
+    renderer: svgRenderer, updateWhenZooming:true,
     radius:4.5, weight:2, color:'#f59e0b', fillColor:'#f59e0b', fillOpacity:0.9
   }).addTo(map);
 
