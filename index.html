@@ -35,22 +35,25 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
-  /* Top bar: [left empty] [city centered] [Confirm on right] */
+  /* Top bar: title truly centered (absolute) + action button on right */
   .topbar {
     position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
     background: #0e1117; border-bottom: 1px solid var(--border);
-    display: grid; grid-template-columns: 1fr 1fr auto; align-items: center;
-    padding: 10px 12px; gap: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.35);
   }
-  .spacer-left { height: 100%; }
+  .topbar-left, .topbar-right { width: 180px; display:flex; align-items:center; }
+  .topbar-left { justify-content:flex-start; }
+  .topbar-right { justify-content:flex-end; }
   .current-city {
+    position: absolute; left: 50%; transform: translateX(-50%);
     text-align: center; font-size: 22px; font-weight: 800; letter-spacing: .2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: calc(100vw - 360px); /* account for left/right areas */
   }
   .current-city .cty { color: #fff; }
   .current-city .sub { color: var(--muted); font-weight: 600; margin-left: 8px; }
-  .topbar-right { display:flex; align-items:center; gap:8px; }
 
   .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
     background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
@@ -91,7 +94,8 @@
     display: none;
   }
   .wiki-panel.open { display: block; }
-  .wiki-title { font-weight: 700; margin: 0 0 4px; font-size: 16px; }
+  .wiki-title { font-weight: 700; margin: 0 0 6px; font-size: 16px; }
+  .wiki-image { width: 100%; border-radius: 10px; display: none; margin-bottom: 8px; }
   .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.4; }
   .wiki-actions { margin-top: 8px; display: flex; gap: 8px; }
   .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
@@ -100,7 +104,8 @@
   @media (max-width: 1000px) {
     .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
     #map { height: calc(70vh); }
-    .current-city { font-size: 18px; }
+    .current-city { font-size: 18px; max-width: calc(100vw - 240px); }
+    .topbar-left, .topbar-right { width: 120px; }
   }
 </style>
 </head>
@@ -108,10 +113,10 @@
 
 <!-- Top bar -->
 <div class="topbar">
-  <div class="spacer-left"></div>
+  <div class="topbar-left"></div>
   <div class="current-city" id="currentCityTop"></div>
   <div class="topbar-right">
-    <button id="confirmBtn" class="btn accent" title="Confirm your current pin">Confirm</button>
+    <button id="confirmBtn" class="btn accent" title="Submit your current pin">Confirm</button>
   </div>
 </div>
 
@@ -177,6 +182,7 @@
     <div class="wiki-title" id="wikiTitle">Wikipedia</div>
     <button class="btn wiki-close" id="wikiClose">Close</button>
   </div>
+  <img id="wikiImg" class="wiki-image" alt="Place image" />
   <div class="wiki-extract" id="wikiExtract">Loading…</div>
   <div class="wiki-actions" id="wikiActions" style="display:none;">
     <a id="wikiLink" target="_blank" rel="noopener">Open on Wikipedia</a>
@@ -205,19 +211,20 @@ let roundCities=[]; let currentIndex=-1;
 let guesses=[]; let totalErrorKm=0;
 
 let provisional = null; // {lat, lon, marker}
+let actionMode = 'confirm'; // 'confirm' or 'next'
 
 const summaryEl=document.getElementById('summary');
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 const currentCityTopEl=document.getElementById('currentCityTop');
+const confirmBtn=document.getElementById('confirmBtn');
 
 /* ========= UI helpers ========= */
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
-function setTop(cityObj){
-  currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : '';
-}
+function setTop(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
+function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
@@ -265,6 +272,7 @@ function resetRoundUI(){
   guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();
   clearProvisional();
   setTop(null);
+  actionMode='confirm'; confirmBtn.textContent='Confirm';
 }
 
 /* ========= Game flow ========= */
@@ -278,7 +286,7 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Fisher–Yates shuffle (correct swap)
+  // Fisher–Yates shuffle
   const idxs=[...pool.keys()];
   for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
@@ -289,6 +297,7 @@ function nextCity(){
   currentIndex++;
   clearProvisional();
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
+  actionMode='confirm'; confirmBtn.textContent='Confirm';
 
   if(currentIndex>=roundCities.length){
     setTop(null);
@@ -302,6 +311,7 @@ function nextCity(){
 /* ========= Map clicks ========= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
+  if(actionMode!=='confirm') return; // don't allow moving pin during feedback
   const lat=e.latlng.lat, lon=e.latlng.lng;
   if(!provisional){
     const marker=L.circleMarker([lat,lon],{
@@ -315,7 +325,11 @@ map.on('click',(e)=>{
   }
 });
 
-/* ========= Confirm ========= */
+/* ========= Confirm / Next ========= */
+async function confirmOrNext(){
+  if(actionMode==='next'){ nextCity(); return; }
+  await confirmGuess();
+}
 async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
@@ -342,13 +356,16 @@ async function confirmGuess(){
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   map.setView([trueLat,trueLon], 8, { animate:true });
 
+  // Wikipedia panel (with image)
   openWikiPanel(c);
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Advance when they click the map again for the next guess (or press Start for a new round)
-  setTimeout(nextCity, 1200);
+  // Feedback in title + switch button to "Next city"
+  setTopDistance(dKm);
+  actionMode='next';
+  confirmBtn.textContent='Next city';
 }
 
 /* ========= Wikipedia panel ========= */
@@ -357,12 +374,14 @@ const wikiTitle = document.getElementById('wikiTitle');
 const wikiExtract = document.getElementById('wikiExtract');
 const wikiLink = document.getElementById('wikiLink');
 const wikiActions = document.getElementById('wikiActions');
+const wikiImg = document.getElementById('wikiImg');
 document.getElementById('wikiClose').addEventListener('click', ()=>{ wikiPanel.classList.remove('open'); });
 
 async function openWikiPanel(city){
   wikiTitle.textContent = cityLabel(city);
   wikiExtract.textContent = 'Loading…';
   wikiActions.style.display='none';
+  wikiImg.style.display='none'; wikiImg.removeAttribute('src');
   wikiPanel.classList.add('open');
 
   const candidates = [];
@@ -379,6 +398,10 @@ async function openWikiPanel(city){
         const data = await resp.json();
         wikiTitle.textContent = data.title || cityLabel(city);
         wikiExtract.textContent = data.extract || 'No summary available.';
+        if(data.thumbnail && data.thumbnail.source){
+          wikiImg.src = data.thumbnail.source;
+          wikiImg.style.display='block';
+        }
         if(data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page){
           wikiLink.href = data.content_urls.desktop.page;
           wikiActions.style.display='flex';
@@ -464,7 +487,7 @@ function loadCSV(url){
       const cities = parseRowsToCities(res.data);
       if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
       allCities = cities;
-      setTop(null); // no placeholder; will show on Start
+      setTop(null); // will show first city after Start
     },
     error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
@@ -483,10 +506,10 @@ document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
   clearMapLayers(); resetRoundUI();
   // Hide wiki + remove labels overlay
-  wikiPanel.classList.remove('open');
+  document.getElementById('wikiPanel').classList.remove('open');
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 });
-document.getElementById('confirmBtn').addEventListener('click', confirmGuess);
+confirmBtn.addEventListener('click', confirmOrNext);
 </script>
 </body>
 </html>
