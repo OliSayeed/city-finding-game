@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>City Guessing Map (Geonames-ready, No Labels)</title>
+<title>City Guessing Map (No Labels, Geonames ≥10k)</title>
 
 <!-- Leaflet -->
 <link
@@ -18,7 +18,7 @@
   crossorigin=""
 ></script>
 
-<!-- Papa Parse for CSV parsing (file or URL) -->
+<!-- Papa Parse -->
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
@@ -34,16 +34,17 @@
   }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
-  .app { display: grid; grid-template-columns: 360px 1fr; grid-template-rows: 100vh; }
+  .app { display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 100vh; }
   .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
   .section { padding: 16px 18px; border-bottom: 1px solid var(--border); }
   h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: .2px; }
   .muted { color: var(--muted); font-size: 13px; }
   .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
-  .controls input[type="number"], .controls input[type="file"], .controls input[type="text"], .controls select {
-    width: 100%; padding: 10px 12px; background: #0d0f13; border: 1px solid var(--border); border-radius: 10px; color: var(--text);
-  }
   .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .controls input[type="number"], .controls input[type="text"], .controls select {
+    width: 100%; padding: 10px 12px; background: #0d0f13; border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text);
+  }
   .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
     background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
     font-weight: 600; letter-spacing: .2px; }
@@ -52,22 +53,28 @@
   .btn.ghost { background: transparent; border: 1px solid var(--border); }
   .btn.small { padding: 7px 10px; font-weight: 500; }
   .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  #map { height: 100vh; width: 100%; }
+
   .pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 6px 10px; border-radius: 999px;
     background: #121722; border: 1px solid var(--border); color: var(--muted); }
   .pill .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
   .pill .dot.guess { background: var(--accent); } .pill .dot.true { background: var(--good); } .pill .dot.line { background: var(--mid); }
-  #map { height: 100vh; width: 100%; }
+
+  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
+  .scorecard .big { font-size: 22px; font-weight: 700; }
+
   .list { display: grid; gap: 6px; margin-top: 8px; max-height: 28vh; overflow: auto; }
   .cityitem { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: #0d0f13; font-size: 14px;
     display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
   .cityitem .badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: #0b0d12; }
   .cityitem.done { opacity: .75; }
-  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
-  .scorecard .big { font-size: 22px; font-weight: 700; }
-  .legend { display: flex; gap: 8px; flex-wrap: wrap; }
-  .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
-  .toggle input { width: 16px; height: 16px; }
+
+  .radio-group { display: grid; gap: 6px; margin-top: 8px; }
+  .radio-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .radio-item input { width: 16px; height: 16px; }
+
   @media (max-width: 1000px) {
     .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
     #map { height: 70vh; }
@@ -79,21 +86,31 @@
   <aside class="sidebar">
     <div class="section">
       <h1>City Guessing Map</h1>
-      <div class="muted">Load your Geonames CSV or a simple <code>name,lat,lon</code> file. Start a round, then click the map to guess each city’s location. Basemap has no labels.</div>
+      <div class="muted">Auto-loads <code>geonames_10k.csv</code> from this repo. Pick a difficulty, start a round, then click the label-free map to guess each city’s location.</div>
     </div>
 
     <div class="section controls">
-      <label>Load from file (CSV)</label>
-      <input id="fileInput" type="file" accept=".csv,.tsv,.txt" />
-      <div class="row" style="margin-top:10px;">
-        <div>
-          <label>Or load from URL (CSV on GitHub/raw)</label>
-          <input id="csvUrl" type="text" placeholder="https://example.com/your.csv" />
-        </div>
-        <div style="display:flex; align-items:end;">
-          <button id="loadUrlBtn" class="btn small">Load URL</button>
-        </div>
+      <label>Difficulty (population threshold)</label>
+      <div class="radio-group" id="difficultyGroup">
+        <label class="radio-item">
+          <input type="radio" name="difficulty" value="1000000">
+          <span>≥ 1,000,000</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="difficulty" value="100000" checked>
+          <span>≥ 100,000</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="difficulty" value="10000">
+          <span>≥ 10,000</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="difficulty" value="custom" id="diffCustom">
+          <span>Custom ≥</span>
+          <input id="customMinPop" type="number" min="1" step="1000" value="10000" style="max-width:120px;">
+        </label>
       </div>
+
       <div class="row" style="margin-top:10px;">
         <div>
           <label>Number per round</label>
@@ -106,10 +123,10 @@
       </div>
       <div class="row" style="margin-top:10px;">
         <div>
-          <label class="toggle"><input id="lockPan" type="checkbox" /> Lock to world view</label>
+          <label class="radio-item"><input id="lockPan" type="checkbox" /> Lock to world view</label>
         </div>
         <div>
-          <label class="toggle"><input id="hideTrueUntilEnd" type="checkbox" checked /> Hide true locations until end</label>
+          <label class="radio-item"><input id="hideTrueUntilEnd" type="checkbox" checked /> Hide true locations until end</label>
         </div>
       </div>
       <div class="btnbar" style="margin-top:10px;">
@@ -117,11 +134,7 @@
         <button id="undoBtn" class="btn ghost">Undo Last Guess</button>
         <button id="resetBtn" class="btn ghost">Clear Map</button>
       </div>
-      <div class="legend" style="margin-top:10px;">
-        <span class="pill"><span class="dot guess"></span> Your guess</span>
-        <span class="pill"><span class="dot true"></span> True location</span>
-        <span class="pill"><span class="dot line"></span> Error (km)</span>
-      </div>
+      <div class="pill" style="margin-top:10px;"><span class="dot guess"></span>&nbsp;Your guess &nbsp;&nbsp; <span class="dot true"></span>&nbsp;True location &nbsp;&nbsp; <span class="dot line"></span>&nbsp;Error (km)</div>
       <div class="muted" style="margin-top:8px;">Tiles: Carto <em>Positron No Labels</em>. Distances are great-circle.</div>
     </div>
 
@@ -155,7 +168,8 @@ L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{a
 map.setMaxBounds([[-85,-200],[85,200]]);
 
 /* ========= State ========= */
-let allCities=[]; // {name,lat,lon}
+let fullDataset=[]; // raw rows from CSV
+let allCities=[];   // normalized [{name, lat, lon, pop}]
 let roundCities=[]; let currentIndex=-1; let rng=Math.random;
 let guesses=[]; let totalErrorKm=0; let hideTrueUntilEnd=true;
 
@@ -175,7 +189,8 @@ function renderCityList(){
   roundCities.forEach((c,idx)=>{
     const div=document.createElement('div');
     div.className='cityitem'+(idx<guesses.length?' done':'');
-    div.innerHTML=`<div>${c.name}</div><div class="badge">${idx<guesses.length?'guessed':(idx===guesses.length?'current':'pending')}</div>`;
+    const lab = idx<guesses.length?'guessed':(idx===guesses.length?'current':'pending');
+    div.innerHTML=`<div>${c.name} <span class="muted" style="font-size:12px;">(${c.pop?.toLocaleString?.()||'?'})</span></div><div class="badge">${lab}</div>`;
     cityListEl.appendChild(div);
   });
 }
@@ -203,14 +218,30 @@ function clearMapLayers(){
 }
 function resetRoundUI(){guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();}
 function startRound(){
+  if(!allCities.length){alert('Dataset not loaded yet.'); return;}
   const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
-  if(!allCities.length){alert('Load a CSV first.'); return;}
-  if(num>allCities.length){alert(`You asked for ${num}, but only ${allCities.length} cities loaded.`); return;}
+
+  // Difficulty threshold
+  const diffSel=[...document.querySelectorAll('input[name="difficulty"]')].find(r=>r.checked)?.value || "100000";
+  let minPop = 100000;
+  if (diffSel === "custom") {
+    const custom = parseInt(document.getElementById('customMinPop').value||'10000',10);
+    minPop = isFinite(custom) ? Math.max(1, custom) : 10000;
+  } else {
+    minPop = parseInt(diffSel,10);
+  }
+
+  const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
+  if (pool.length < num) {
+    alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Lower the difficulty or reduce number per round.`);
+    return;
+  }
+
   const seedStr=document.getElementById('seedInput').value.trim(); rng=seedStr?mulberry32(xmur3(seedStr)()):Math.random;
 
-  const idxs=[...allCities.keys()];
+  const idxs=[...pool.keys()];
   for(let i=idxs.length-1;i>0;i--){const j=Math.floor(rng()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
-  roundCities=idxs.slice(0,num).map(i=>allCities[i]);
+  roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
   clearMapLayers(); resetRoundUI(); renderCityList(); nextCity();
 }
@@ -269,19 +300,21 @@ map.on('click',(e)=>{
   nextCity();
 });
 
-/* ========= CSV loading (file and URL). Geonames-aware. ========= */
+/* ========= CSV loader (auto) ========= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
-
 function parseRowsToCities(rows){
   const parsed=[];
   for(const r of rows){
-    // Try many header variants; Geonames uses "Name" and "Coordinates"
-    const name = (r.name ?? r.city ?? r.City ?? r.Name ?? '').toString().trim();
+    const name = (r.name ?? r.city ?? r.City ?? r.Name ?? r['LABEL EN'] ?? r['ASCII Name'] ?? '').toString().trim();
+
+    // Population (if present in this trimmed CSV)
+    let pop = r.Population ?? r.population ?? r.pop ?? r['Population '];
+    const popNum = parseInt(pop, 10);
+    const finalPop = Number.isFinite(popNum) ? popNum : null;
 
     let lat = r.lat ?? r.latitude ?? r.Lat ?? r.Latitude;
     let lon = r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude;
 
-    // Geonames "Coordinates" like "11.50021, 125.49811"
     if ((lat==null || lon==null) && (r.Coordinates!=null || r['Coordinates ']!=null)) {
       const coordStr = (r.Coordinates ?? r['Coordinates ']).toString();
       const parts = coordStr.split(',', 2);
@@ -291,54 +324,34 @@ function parseRowsToCities(rows){
       }
     }
 
-    // Some CSVs might have "LABEL EN" or "ASCII Name" if Name is blank
-    const fallbackName = (r['LABEL EN'] ?? r['ASCII Name'] ?? '').toString().trim();
-    const finalName = name || fallbackName;
-
     const latNum = parseFloat(lat);
     const lonNum = parseFloat(lon);
 
-    if (!finalName || !isFinite(latNum) || !isFinite(lonNum)) continue;
-    parsed.push({ name: finalName, lat: latNum, lon: lonNum });
+    if (!name || !isFinite(latNum) || !isFinite(lonNum)) continue;
+    parsed.push({ name, lat: latNum, lon: lonNum, pop: finalPop });
   }
   return parsed;
 }
 
-function loadFromFile(file){
-  Papa.parse(file,{
-    header:true, skipEmptyLines:true,
-    transformHeader: normalizeHeader,
-    complete: function(res){
-      const cities = parseRowsToCities(res.data);
-      if(!cities.length){ alert('No valid rows found. Ensure there is a city name and coordinates.'); return; }
-      allCities = cities; alert(`Loaded ${allCities.length} cities.`); setPrompt('Ready. Start a new round whenever you like.');
-    },
-    error: function(err){ console.error(err); alert('Error parsing file. See console for details.'); }
-  });
-}
-
 function loadFromUrl(url){
   Papa.parse(url,{
-    download:true, header:true, skipEmptyLines:true,
-    transformHeader: normalizeHeader,
+    download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
     complete: function(res){
+      fullDataset = res.data;
       const cities = parseRowsToCities(res.data);
-      if(!cities.length){ alert('No valid rows found at URL.'); return; }
-      allCities = cities; alert(`Loaded ${allCities.length} cities from URL.`); setPrompt('Ready. Start a new round whenever you like.');
+      if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
+      allCities = cities;
+      setPrompt('Dataset loaded. Pick a difficulty and start a round.');
     },
-    error: function(err){ console.error(err); alert('Error loading URL. Check CORS and the link.'); }
+    error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
 }
 
-/* ========= Buttons ========= */
-document.getElementById('fileInput').addEventListener('change', (evt)=>{
-  const f=evt.target.files && evt.target.files[0]; if(!f) return; loadFromFile(f);
+// Auto-load the bundled CSV at startup
+window.addEventListener('DOMContentLoaded', () => {
+  loadFromUrl('geonames_10k.csv'); // put this file in the repo root
 });
-document.getElementById('loadUrlBtn').addEventListener('click', ()=>{
-  const url=document.getElementById('csvUrl').value.trim();
-  if(!url) { alert('Enter a CSV URL.'); return; }
-  loadFromUrl(url);
-});
+
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('undoBtn').addEventListener('click', undoLast);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
