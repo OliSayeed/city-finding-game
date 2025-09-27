@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>City finding game</title>
 
+<!-- Performance hints for Wikipedia -->
+<link rel="preconnect" href="https://en.wikipedia.org" crossorigin>
+<link rel="preconnect" href="https://upload.wikimedia.org" crossorigin>
+
 <!-- Leaflet -->
 <link
   rel="stylesheet"
@@ -81,7 +85,11 @@
   /* Wikipedia panel in sidebar (visible only during feedback mode) */
   .wiki-side { display: none; gap: 10px; }
   .wiki-side.open { display: grid; }
-  .wiki-title { font-weight: 700; margin: 0; font-size: 16px; }
+  .wiki-title {
+    font-weight: 800; margin: 0;
+    font-size: 22px; /* match top title size */
+    letter-spacing: .2px;
+  }
   .wiki-image { width: 100%; border-radius: 10px; display: none; }
   .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.45; max-height: 28vh; overflow: auto; }
   .wiki-actions { display:flex; gap:10px; }
@@ -116,7 +124,7 @@
 
 <div class="app">
   <aside class="sidebar">
-    <!-- CONTROLS (always top in normal mode; hidden during feedback) -->
+    <!-- CONTROLS (top in normal mode; hidden during feedback) -->
     <div id="controlsSection" class="section controls">
       <h1>Controls</h1>
       <label>Difficulty (population threshold)</label>
@@ -157,7 +165,7 @@
     <div id="wikiSection" class="section">
       <div id="wikiSide" class="wiki-side">
         <div class="wiki-title" id="wikiTitle">Wikipedia</div>
-        <img id="wikiImg" class="wiki-image" alt="Place image" />
+        <img id="wikiImg" class="wiki-image" alt="Place image" loading="lazy"/>
         <div class="wiki-extract" id="wikiExtract"></div>
         <div class="wiki-actions" id="wikiActions" style="display:none;">
           <a id="wikiLink" target="_blank" rel="noopener">Open on Wikipedia</a>
@@ -165,7 +173,7 @@
       </div>
     </div>
 
-    <!-- ROUND STATUS (always below controls/panel) -->
+    <!-- ROUND STATUS (below controls/panel) -->
     <div id="statusSection" class="section">
       <h1>Round status</h1>
       <div class="scorebox" style="margin-bottom:10px;">
@@ -195,6 +203,8 @@ const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{
 const labelsOverlay = L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
 map.setMaxBounds([[-85,-200],[85,200]]);
 
+const WORLD_VIEW = { center: [20,0], zoom: 2 };
+
 /* ========= State ========= */
 let adminMap = {}; // "CC.Admin1Code" -> Subdivision name
 let allCities=[];   // [{name, lat, lon, pop, sub, country}]
@@ -202,7 +212,7 @@ let roundCities=[]; let currentIndex=-1;
 let guesses=[]; let totalErrorKm=0;
 
 let provisional = null; // {lat, lon, marker}
-let actionMode = 'confirm'; // 'confirm' or 'next'
+let actionMode = 'confirm'; // 'confirm' | 'next' | 'results'
 
 const summaryEl=document.getElementById('summary');
 const guessedCountEl=document.getElementById('guessedCount');
@@ -212,8 +222,51 @@ const currentCityTopEl=document.getElementById('currentCityTop');
 const confirmBtn=document.getElementById('confirmBtn');
 
 const controlsSection = document.getElementById('controlsSection');
-const wikiSection = document.getElementById('wikiSection');
 const wikiSide = document.getElementById('wikiSide');
+
+/* ========= Wikipedia prefetch cache ========= */
+const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
+function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
+
+function wikiCandidates(city){
+  const arr=[];
+  if(city.sub && city.country){ arr.push(`${city.name}, ${city.sub}, ${city.country}`); }
+  if(city.sub){ arr.push(`${city.name}, ${city.sub}`); }
+  if(city.country){ arr.push(`${city.name}, ${city.country}`); }
+  arr.push(city.name);
+  return arr;
+}
+
+async function fetchWikiDataForTitle(title){
+  const slug = encodeURIComponent(title.replace(/\s+/g,'_'));
+  const resp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`);
+  if(!resp.ok) throw new Error('not ok');
+  const data = await resp.json();
+  const imgSrc = (data.originalimage && data.originalimage.source) ? data.originalimage.source
+              : (data.thumbnail && data.thumbnail.source) ? data.thumbnail.source
+              : null;
+  const pageUrl = data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page;
+  return {
+    title: data.title || title,
+    extract: (data.extract && data.extract.length) ? data.extract : 'No summary available.',
+    imgSrc: imgSrc || null,
+    pageUrl: pageUrl || null
+  };
+}
+
+async function prefetchWiki(city){
+  const key = cityKey(city);
+  if(wikiCache.has(key)) return;
+  const candidates = wikiCandidates(city);
+  for(const t of candidates){
+    try{
+      const info = await fetchWikiDataForTitle(t);
+      wikiCache.set(key, info);
+      return;
+    }catch(e){ /* try next */ }
+  }
+  wikiCache.set(key, {title: city.name, extract: 'No summary found on Wikipedia.', imgSrc: null, pageUrl: null});
+}
 
 /* ========= UI helpers ========= */
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
@@ -249,14 +302,11 @@ function renderSummary(){
 
 /* ========= Sidebar visibility ========= */
 function showFeedbackUI(){
-  // Show labels overlay, hide controls, show wiki panel
-  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+  // Hide controls, show wiki panel (faster via cache)
   controlsSection.style.display = 'none';
   wikiSide.classList.add('open');
 }
 function hideFeedbackUI(){
-  // Remove labels overlay, show controls, hide wiki panel
-  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
   controlsSection.style.display = '';
   wikiSide.classList.remove('open');
 }
@@ -283,6 +333,25 @@ function resetRoundUI(){
   setTop(null);
   actionMode='confirm'; confirmBtn.textContent='Confirm';
   hideFeedbackUI();
+  resetMapView();
+}
+
+/* ========= Map helpers ========= */
+function resetMapView(){
+  if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
+  map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
+}
+function fitToAllGuesses(){
+  const pts=[];
+  guesses.forEach(g=>{
+    pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]);
+  });
+  if(pts.length){
+    const bounds = L.latLngBounds(pts);
+    map.fitBounds(bounds.pad(0.2));
+  }else{
+    resetMapView();
+  }
 }
 
 /* ========= Game flow ========= */
@@ -296,6 +365,7 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
+  // Fisher–Yates shuffle
   const idxs=[...pool.keys()];
   for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
@@ -307,20 +377,25 @@ function nextCity(){
   clearProvisional();
   actionMode='confirm'; confirmBtn.textContent='Confirm';
   hideFeedbackUI();
+  resetMapView();
 
   if(currentIndex>=roundCities.length){
     setTop(null);
     renderSummary();
+    // We are at end; button state handled in confirm flow (it will say "See results")
     return;
   }
-  setTop(roundCities[currentIndex]);
+  const city = roundCities[currentIndex];
+  setTop(city);
   updateScoreBox();
+  // Prefetch wiki for speed
+  prefetchWiki(city);
 }
 
 /* ========= Map clicks ========= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
-  if(actionMode!=='confirm') return; // don't allow moving pin during feedback
+  if(actionMode!=='confirm') return; // don't allow moving pin during feedback/results
   const lat=e.latlng.lat, lon=e.latlng.lng;
   if(!provisional){
     const marker=L.circleMarker([lat,lon],{
@@ -334,9 +409,10 @@ map.on('click',(e)=>{
   }
 });
 
-/* ========= Confirm / Next ========= */
+/* ========= Confirm / Next / Results ========= */
 async function confirmOrNext(){
   if(actionMode==='next'){ nextCity(); return; }
+  if(actionMode==='results'){ showRoundResults(); return; }
   await confirmGuess();
 }
 async function confirmGuess(){
@@ -361,71 +437,63 @@ async function confirmGuess(){
     weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
   }).addTo(map);
 
-  // Feedback UI: labels + wiki panel replace controls
-  showFeedbackUI();
-  map.setView([trueLat,trueLon], 8, { animate:true });
-  openWikiSidePanel(c);
-
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Title shows distance; button switches to Next city
+  // Feedback UI: show wiki (from cache), show distance in title
+  showFeedbackUI();
   setTopDistance(dKm);
-  actionMode='next';
-  confirmBtn.textContent='Next city';
+  populateWikiFromCache(c);
+
+  // Immediately reset map view to world (don't stay on last location)
+  resetMapView();
+
+  // Button state: Next city or See results if this was the last city
+  const isLast = (currentIndex === roundCities.length - 1);
+  actionMode = isLast ? 'results' : 'next';
+  confirmBtn.textContent = isLast ? 'See results' : 'Next city';
 }
 confirmBtn.addEventListener('click', confirmOrNext);
 
-/* ========= Wikipedia (sidebar) ========= */
-const wikiTitle = document.getElementById('wikiTitle');
-const wikiExtract = document.getElementById('wikiExtract');
-const wikiLink = document.getElementById('wikiLink');
-const wikiActions = document.getElementById('wikiActions');
-const wikiImg = document.getElementById('wikiImg');
+function populateWikiFromCache(city){
+  const key = cityKey(city);
+  const info = wikiCache.get(key);
+  const wikiTitle = document.getElementById('wikiTitle');
+  const wikiExtract = document.getElementById('wikiExtract');
+  const wikiLink = document.getElementById('wikiLink');
+  const wikiActions = document.getElementById('wikiActions');
+  const wikiImg = document.getElementById('wikiImg');
 
-async function openWikiSidePanel(city){
-  // Ensure section is visible (handled by showFeedbackUI)
-  wikiTitle.textContent = cityLabel(city);
-  wikiExtract.textContent = 'Loading…';
-  wikiActions.style.display='none';
-  wikiImg.style.display='none'; wikiImg.removeAttribute('src');
-
-  const candidates = [];
-  if(city.sub && city.country){ candidates.push(`${city.name}, ${city.sub}, ${city.country}`); }
-  if(city.sub){ candidates.push(`${city.name}, ${city.sub}`); }
-  if(city.country){ candidates.push(`${city.name}, ${city.country}`); }
-  candidates.push(city.name);
-
-  for(const t of candidates){
-    try{
-      const titleSlug = encodeURIComponent(t.replace(/\s+/g,'_'));
-      const resp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${titleSlug}`);
-      if(!resp.ok) continue;
-      const data = await resp.json();
-
-      wikiTitle.textContent = data.title || cityLabel(city);
-      wikiExtract.textContent = data.extract && data.extract.length ? data.extract : 'No summary available.';
-
-      const imgSrc = (data.originalimage && data.originalimage.source) ? data.originalimage.source
-                   : (data.thumbnail && data.thumbnail.source) ? data.thumbnail.source
-                   : null;
-      if(imgSrc){
-        wikiImg.src = imgSrc;
-        wikiImg.style.display='block';
-      }
-
-      const pageUrl = data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page;
-      if(pageUrl){
-        wikiLink.href = pageUrl;
-        wikiActions.style.display='flex';
-      }else{
-        wikiActions.style.display='none';
-      }
-      return;
-    }catch(e){ /* try next candidate */ }
+  if(!info){
+    wikiTitle.textContent = cityLabel(city);
+    wikiExtract.textContent = 'Loading…';
+    wikiImg.style.display='none'; wikiImg.removeAttribute('src');
+    wikiActions.style.display='none';
+    return;
   }
-  wikiExtract.textContent = 'No summary found on Wikipedia.';
-  wikiActions.style.display='none';
+  wikiTitle.textContent = info.title || cityLabel(city);
+  wikiExtract.textContent = info.extract || 'No summary available.';
+  if(info.imgSrc){
+    wikiImg.src = info.imgSrc; wikiImg.style.display='block';
+  }else{
+    wikiImg.style.display='none'; wikiImg.removeAttribute('src');
+  }
+  if(info.pageUrl){
+    wikiLink.href = info.pageUrl; wikiActions.style.display='flex';
+  }else{
+    wikiActions.style.display='none';
+  }
+}
+
+/* ========= Results view ========= */
+function showRoundResults(){
+  // Ensure all layers are visible (they already are as we never removed them)
+  // Show summary and fit map to all guess/true points
+  renderSummary();
+  hideFeedbackUI(); // hide wiki in results view
+  setTop(null);
+  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map); // optional: names for context
+  fitToAllGuesses();
 }
 
 /* ========= Data loading ========= */
