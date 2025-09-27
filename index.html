@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>City Guessing Map (Geonames-ready, No Labels)</title>
+
+<!-- Leaflet -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
+
+<!-- Papa Parse for CSV parsing (file or URL) -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+  :root {
+    --bg: #0b0c0f;
+    --panel: #111317;
+    --muted: #a9b0bd;
+    --text: #e9eef6;
+    --accent: #6aa0ff;
+    --good: #22c55e;
+    --mid: #f59e0b;
+    --border: #1f2430;
+  }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
+  .app { display: grid; grid-template-columns: 360px 1fr; grid-template-rows: 100vh; }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .section { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: .2px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
+  .controls input[type="number"], .controls input[type="file"], .controls input[type="text"], .controls select {
+    width: 100%; padding: 10px 12px; background: #0d0f13; border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+  }
+  .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btn { appearance: none; border: none; cursor: pointer; padding: 10px 12px; border-radius: 12px;
+    background: #1a2233; color: var(--text); transition: transform .02s ease, opacity .2s ease, background .2s ease;
+    font-weight: 600; letter-spacing: .2px; }
+  .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
+  .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); }
+  .btn.small { padding: 7px 10px; font-weight: 500; }
+  .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 6px 10px; border-radius: 999px;
+    background: #121722; border: 1px solid var(--border); color: var(--muted); }
+  .pill .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+  .pill .dot.guess { background: var(--accent); } .pill .dot.true { background: var(--good); } .pill .dot.line { background: var(--mid); }
+  #map { height: 100vh; width: 100%; }
+  .list { display: grid; gap: 6px; margin-top: 8px; max-height: 28vh; overflow: auto; }
+  .cityitem { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: #0d0f13; font-size: 14px;
+    display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+  .cityitem .badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: #0b0d12; }
+  .cityitem.done { opacity: .75; }
+  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
+  .scorecard .big { font-size: 22px; font-weight: 700; }
+  .legend { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .toggle input { width: 16px; height: 16px; }
+  @media (max-width: 1000px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
+    #map { height: 70vh; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="section">
+      <h1>City Guessing Map</h1>
+      <div class="muted">Load your Geonames CSV or a simple <code>name,lat,lon</code> file. Start a round, then click the map to guess each city’s location. Basemap has no labels.</div>
+    </div>
+
+    <div class="section controls">
+      <label>Load from file (CSV)</label>
+      <input id="fileInput" type="file" accept=".csv,.tsv,.txt" />
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Or load from URL (CSV on GitHub/raw)</label>
+          <input id="csvUrl" type="text" placeholder="https://example.com/your.csv" />
+        </div>
+        <div style="display:flex; align-items:end;">
+          <button id="loadUrlBtn" class="btn small">Load URL</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Number per round</label>
+          <input id="numPerRound" type="number" min="1" max="200" step="1" value="10" />
+        </div>
+        <div>
+          <label>Seed (optional)</label>
+          <input id="seedInput" type="text" placeholder="e.g. 42" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label class="toggle"><input id="lockPan" type="checkbox" /> Lock to world view</label>
+        </div>
+        <div>
+          <label class="toggle"><input id="hideTrueUntilEnd" type="checkbox" checked /> Hide true locations until end</label>
+        </div>
+      </div>
+      <div class="btnbar" style="margin-top:10px;">
+        <button id="startBtn" class="btn accent">Start New Round</button>
+        <button id="undoBtn" class="btn ghost">Undo Last Guess</button>
+        <button id="resetBtn" class="btn ghost">Clear Map</button>
+      </div>
+      <div class="legend" style="margin-top:10px;">
+        <span class="pill"><span class="dot guess"></span> Your guess</span>
+        <span class="pill"><span class="dot true"></span> True location</span>
+        <span class="pill"><span class="dot line"></span> Error (km)</span>
+      </div>
+      <div class="muted" style="margin-top:8px;">Tiles: Carto <em>Positron No Labels</em>. Distances are great-circle.</div>
+    </div>
+
+    <div class="section">
+      <h1>Round Status</h1>
+      <div class="scorebox" style="margin-bottom:10px;">
+        <div class="scorecard"><div class="muted">Guessed</div><div id="guessedCount" class="big">0</div></div>
+        <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
+        <div class="scorecard"><div class="muted">Total Error</div><div id="totalError" class="big">0 km</div></div>
+      </div>
+      <div id="currentPrompt" class="pill" style="margin-bottom:10px;">No round yet.</div>
+      <div id="cityList" class="list"></div>
+      <div id="summary" class="list" style="margin-top:10px;"></div>
+    </div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<script>
+/* ========= Seeded RNG ========= */
+function xmur3(str){let h=1779033703^str.length;for(let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=(h<<13)|(h>>>19);}return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);h^=h>>>16;return h>>>0;};}
+function mulberry32(a){return function(){let t=(a+=0x6D2B79F5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
+
+/* ========= Distance (km) ========= */
+function haversineKm(lat1,lon1,lat2,lon2){const R=6371,toRad=d=>d*Math.PI/180;const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+
+/* ========= Map ========= */
+const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
+L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+map.setMaxBounds([[-85,-200],[85,200]]);
+
+/* ========= State ========= */
+let allCities=[]; // {name,lat,lon}
+let roundCities=[]; let currentIndex=-1; let rng=Math.random;
+let guesses=[]; let totalErrorKm=0; let hideTrueUntilEnd=true;
+
+const cityListEl=document.getElementById('cityList');
+const summaryEl=document.getElementById('summary');
+const currentPromptEl=document.getElementById('currentPrompt');
+const guessedCountEl=document.getElementById('guessedCount');
+const remainingCountEl=document.getElementById('remainingCount');
+const totalErrorEl=document.getElementById('totalError');
+
+/* ========= UI helpers ========= */
+function fmtKm(km){if(km<1)return `${(km*1000).toFixed(0)} m`; if(km<100)return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
+function setPrompt(t){currentPromptEl.textContent=t;}
+function updateScoreBox(){guessedCountEl.textContent=guesses.length; remainingCountEl.textContent=Math.max(0,roundCities.length-guesses.length); totalErrorEl.textContent=fmtKm(totalErrorKm);}
+function renderCityList(){
+  cityListEl.innerHTML='';
+  roundCities.forEach((c,idx)=>{
+    const div=document.createElement('div');
+    div.className='cityitem'+(idx<guesses.length?' done':'');
+    div.innerHTML=`<div>${c.name}</div><div class="badge">${idx<guesses.length?'guessed':(idx===guesses.length?'current':'pending')}</div>`;
+    cityListEl.appendChild(div);
+  });
+}
+function renderSummary(){
+  summaryEl.innerHTML='';
+  if(guesses.length!==roundCities.length) return;
+  const header=document.createElement('div'); header.className='cityitem';
+  header.innerHTML=`<div><strong>Round Summary</strong></div><div class="badge">Total: ${fmtKm(totalErrorKm)}</div>`;
+  summaryEl.appendChild(header);
+  guesses.map(g=>({name:g.city.name,dist:g.distKm})).sort((a,b)=>b.dist-a.dist).forEach(r=>{
+    const row=document.createElement('div'); row.className='cityitem';
+    row.innerHTML=`<div>${r.name}</div><div class="badge">${fmtKm(r.dist)}</div>`; summaryEl.appendChild(row);
+  });
+}
+
+/* ========= Round control ========= */
+function clearMapLayers(){
+  guesses.forEach(g=>{
+    if(g.layers){
+      if(g.layers.guessMarker) map.removeLayer(g.layers.guessMarker);
+      if(g.layers.trueMarker) map.removeLayer(g.layers.trueMarker);
+      if(g.layers.line) map.removeLayer(g.layers.line);
+    }
+  });
+}
+function resetRoundUI(){guesses=[]; totalErrorKm=0; currentIndex=-1; summaryEl.innerHTML=''; updateScoreBox();}
+function startRound(){
+  const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
+  if(!allCities.length){alert('Load a CSV first.'); return;}
+  if(num>allCities.length){alert(`You asked for ${num}, but only ${allCities.length} cities loaded.`); return;}
+  const seedStr=document.getElementById('seedInput').value.trim(); rng=seedStr?mulberry32(xmur3(seedStr)()):Math.random;
+
+  const idxs=[...allCities.keys()];
+  for(let i=idxs.length-1;i>0;i--){const j=Math.floor(rng()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+  roundCities=idxs.slice(0,num).map(i=>allCities[i]);
+
+  clearMapLayers(); resetRoundUI(); renderCityList(); nextCity();
+}
+function nextCity(){
+  currentIndex++;
+  if(currentIndex>=roundCities.length){
+    setPrompt('Round complete! Review your results below.');
+    renderSummary();
+    if(hideTrueUntilEnd){
+      guesses.forEach(g=>{
+        if(g.layers && g.layers.trueMarker && !map.hasLayer(g.layers.trueMarker)){
+          map.addLayer(g.layers.trueMarker); map.addLayer(g.layers.line);
+        }
+      });
+    }
+    return;
+  }
+  setPrompt(`Click on the map for: ${roundCities[currentIndex].name}`);
+  updateScoreBox(); renderCityList();
+}
+function undoLast(){
+  if(guesses.length===0) return;
+  if(currentIndex>=roundCities.length){ alert('Round complete. Start a new round or clear the map.'); return; }
+  const last=guesses.pop(); totalErrorKm-=last.distKm;
+  if(last.layers){ if(last.layers.guessMarker) map.removeLayer(last.layers.guessMarker);
+    if(last.layers.trueMarker) map.removeLayer(last.layers.trueMarker);
+    if(last.layers.line) map.removeLayer(last.layers.line); }
+  currentIndex--; renderCityList(); updateScoreBox();
+  setPrompt(`Click on the map for: ${roundCities[currentIndex+1].name}`);
+}
+
+/* ========= Map clicks ========= */
+map.on('click',(e)=>{
+  if(currentIndex<0 || currentIndex>=roundCities.length) return;
+  const c=roundCities[currentIndex];
+  const guessLat=e.latlng.lat, guessLon=e.latlng.lng;
+  const trueLat=c.lat, trueLon=c.lon;
+  const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
+
+  const guessMarker=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
+    .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+  const trueMarker=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
+    .bindTooltip(`${c.name}<br>True location`,{direction:'top'});
+  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'});
+
+  if(!hideTrueUntilEnd){ trueMarker.addTo(map); line.addTo(map); }
+
+  guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
+  totalErrorKm+=dKm; updateScoreBox(); renderCityList();
+
+  const lockPan=document.getElementById('lockPan').checked;
+  if(!lockPan && !hideTrueUntilEnd){
+    const bounds=L.latLngBounds([[guessLat,guessLon],[trueLat,trueLon]]);
+    map.fitBounds(bounds.pad(0.3),{animate:true});
+  }
+  nextCity();
+});
+
+/* ========= CSV loading (file and URL). Geonames-aware. ========= */
+function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
+
+function parseRowsToCities(rows){
+  const parsed=[];
+  for(const r of rows){
+    // Try many header variants; Geonames uses "Name" and "Coordinates"
+    const name = (r.name ?? r.city ?? r.City ?? r.Name ?? '').toString().trim();
+
+    let lat = r.lat ?? r.latitude ?? r.Lat ?? r.Latitude;
+    let lon = r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude;
+
+    // Geonames "Coordinates" like "11.50021, 125.49811"
+    if ((lat==null || lon==null) && (r.Coordinates!=null || r['Coordinates ']!=null)) {
+      const coordStr = (r.Coordinates ?? r['Coordinates ']).toString();
+      const parts = coordStr.split(',', 2);
+      if (parts.length === 2) {
+        lat = parts[0].trim();
+        lon = parts[1].trim();
+      }
+    }
+
+    // Some CSVs might have "LABEL EN" or "ASCII Name" if Name is blank
+    const fallbackName = (r['LABEL EN'] ?? r['ASCII Name'] ?? '').toString().trim();
+    const finalName = name || fallbackName;
+
+    const latNum = parseFloat(lat);
+    const lonNum = parseFloat(lon);
+
+    if (!finalName || !isFinite(latNum) || !isFinite(lonNum)) continue;
+    parsed.push({ name: finalName, lat: latNum, lon: lonNum });
+  }
+  return parsed;
+}
+
+function loadFromFile(file){
+  Papa.parse(file,{
+    header:true, skipEmptyLines:true,
+    transformHeader: normalizeHeader,
+    complete: function(res){
+      const cities = parseRowsToCities(res.data);
+      if(!cities.length){ alert('No valid rows found. Ensure there is a city name and coordinates.'); return; }
+      allCities = cities; alert(`Loaded ${allCities.length} cities.`); setPrompt('Ready. Start a new round whenever you like.');
+    },
+    error: function(err){ console.error(err); alert('Error parsing file. See console for details.'); }
+  });
+}
+
+function loadFromUrl(url){
+  Papa.parse(url,{
+    download:true, header:true, skipEmptyLines:true,
+    transformHeader: normalizeHeader,
+    complete: function(res){
+      const cities = parseRowsToCities(res.data);
+      if(!cities.length){ alert('No valid rows found at URL.'); return; }
+      allCities = cities; alert(`Loaded ${allCities.length} cities from URL.`); setPrompt('Ready. Start a new round whenever you like.');
+    },
+    error: function(err){ console.error(err); alert('Error loading URL. Check CORS and the link.'); }
+  });
+}
+
+/* ========= Buttons ========= */
+document.getElementById('fileInput').addEventListener('change', (evt)=>{
+  const f=evt.target.files && evt.target.files[0]; if(!f) return; loadFromFile(f);
+});
+document.getElementById('loadUrlBtn').addEventListener('click', ()=>{
+  const url=document.getElementById('csvUrl').value.trim();
+  if(!url) { alert('Enter a CSV URL.'); return; }
+  loadFromUrl(url);
+});
+document.getElementById('startBtn').addEventListener('click', startRound);
+document.getElementById('undoBtn').addEventListener('click', undoLast);
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  clearMapLayers(); resetRoundUI(); renderCityList(); setPrompt('Map cleared. Start a new round to play again.');
+});
+document.getElementById('hideTrueUntilEnd').addEventListener('change',(e)=>{ hideTrueUntilEnd=e.currentTarget.checked; });
+hideTrueUntilEnd=document.getElementById('hideTrueUntilEnd').checked;
+</script>
+</body>
+</html>
