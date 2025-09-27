@@ -39,7 +39,7 @@
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;}
 
-  /* Top bar: brand (left), absolute-centered title (city/distance/summary), action button on right */
+  /* Top bar */
   .topbar {
     position: fixed; z-index: 1000; top: 0; left: 0; right: 0;
     background: #0e1117; border-bottom: 1px solid var(--border);
@@ -65,7 +65,7 @@
   .btn:hover { background: #1d2740; } .btn:active { transform: translateY(1px); }
   .btn.accent { background: var(--accent); color: #081021; } .btn.accent:hover { opacity: .95; }
 
-  /* Layout below the topbar */
+  /* Layout */
   .app {
     display: grid;
     grid-template-columns: 380px 1fr;
@@ -77,23 +77,23 @@
   h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: .2px; }
   .muted { color: var(--muted); font-size: 13px; }
 
-  #map { height: calc(100vh - 56px); width: 100%; }
+  #map { height: calc(100vh - 56px); width: 100%; position: relative; }
 
+  /* Round status */
   .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
   .scorecard .big { font-size: 22px; font-weight: 700; }
 
-  /* Wikipedia panel in sidebar (visible only during feedback mode) */
+  /* Wikipedia panel */
   .wiki-side { display: none; gap: 10px; }
   .wiki-side.open { display: grid; }
-  .wiki-title {
-    font-weight: 800; margin: 0; font-size: 22px; letter-spacing: .2px;
-  }
+  .wiki-title { font-weight: 800; margin: 0; font-size: 22px; letter-spacing: .2px; }
   .wiki-image { width: 100%; border-radius: 10px; display: none; }
   .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.45; max-height: 28vh; overflow: auto; }
   .wiki-actions { display:flex; gap:10px; }
   .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
 
+  /* Controls */
   .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
   .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .controls input[type="number"] {
@@ -101,6 +101,20 @@
     border-radius: 10px; color: #e9eef6;
   }
   .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* DOM feedback markers (fixed pixel size; no zoom scaling) */
+  .dom-pin {
+    position: absolute;
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid #000c; box-shadow: 0 0 0 1px #00000055;
+    pointer-events: none; /* not clickable */
+    transform: translate(-50%, -50%);
+    will-change: transform; /* smooth during RAF updates */
+    z-index: 600; /* above vectors */
+  }
+  .dom-pin.guess { background: #6aa0ff; }
+  .dom-pin.true { background: #22c55e; }
+  .dom-pin.head { background: #f59e0b; border-color: #0008; }
 
   @media (max-width: 1000px) {
     .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
@@ -112,7 +126,6 @@
 </head>
 <body>
 
-<!-- Top bar -->
 <div class="topbar">
   <div class="brand">Find the city</div>
   <div class="current-city" id="currentCityTop"></div>
@@ -123,7 +136,6 @@
 
 <div class="app">
   <aside class="sidebar">
-    <!-- CONTROLS (top in normal mode; hidden during feedback) -->
     <div id="controlsSection" class="section controls">
       <h1>Controls</h1>
       <label>Difficulty (population threshold)</label>
@@ -160,7 +172,6 @@
       </div>
     </div>
 
-    <!-- WIKIPEDIA PANEL (appears only during feedback) -->
     <div id="wikiSection" class="section">
       <div id="wikiSide" class="wiki-side">
         <div class="wiki-title" id="wikiTitle">Wikipedia</div>
@@ -172,7 +183,6 @@
       </div>
     </div>
 
-    <!-- ROUND STATUS (below controls/panel) -->
     <div id="statusSection" class="section">
       <h1>Round status</h1>
       <div class="scorebox" style="margin-bottom:10px;">
@@ -180,7 +190,6 @@
         <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
         <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
       </div>
-      <!-- Empty area kept intentionally; results use top-center title instead. -->
       <div id="summary" style="display:none;"></div>
     </div>
   </aside>
@@ -189,7 +198,7 @@
 </div>
 
 <script>
-/* ========= Distance (km) ========= */
+/* ========= Distance ========= */
 function haversineKm(lat1,lon1,lat2,lon2){
   const R=6371, toRad=d=>d*Math.PI/180;
   const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
@@ -199,12 +208,8 @@ function haversineKm(lat1,lon1,lat2,lon2){
 
 /* ========= Map ========= */
 const map=L.map('map',{
-  minZoom:1.5,
-  worldCopyJump:true,
-  attributionControl:true,
-  zoomAnimation:true,
-  zoomAnimationThreshold: 4,   // keep animation smooth
-  preferCanvas: false          // ensure SVG renderer is used for crisp vectors
+  minZoom:1.5, worldCopyJump:true, attributionControl:true,
+  zoomAnimation:true, zoomAnimationThreshold: 4, preferCanvas:false
 }).setView([20,0],2);
 
 const baseNoLabels = L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
@@ -213,17 +218,13 @@ map.setMaxBounds([[-85,-200],[85,200]]);
 
 const WORLD_VIEW = { center: [20,0], zoom: 2 };
 
-/* --- Shared crisp SVG renderer (prevents pixellated scaling during zoom) --- */
-const svgRenderer = L.svg({ padding: 0.5 });
-svgRenderer.addTo(map); // attach to map so layers use it
-
 /* ========= State ========= */
 let adminMap = {};
-let allCities=[];
+let allCities=[];   // {name, lat, lon, pop, sub, country}
 let roundCities=[]; let currentIndex=-1;
 let guesses=[]; let totalErrorKm=0;
 
-let provisional = null; // {lat, lon, marker}
+let provisional = null; // {lat, lon, marker (SVG circleMarker)}
 let actionMode = 'confirm'; // 'confirm' | 'next' | 'results' | 'restart'
 
 const currentCityTopEl=document.getElementById('currentCityTop');
@@ -235,16 +236,16 @@ const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 const totalErrorEl=document.getElementById('totalError');
 
-/* Feedback layers (only for current city) */
-let feedbackLayers = [];
-let animMarker = null;
-let animatedLine = null;
+/* Feedback layers (current city) */
+let feedbackPolyline = null;
+let domGuess = null, domTrue = null, domHead = null;
+let domMarkers = []; // for cleanup
 
 /* Results layers (entire round) */
 let resultLayers = [];
 
-/* ========= Wikipedia prefetch cache + robust fetch (redirects/diacritics) ========= */
-const wikiCache = new Map(); // key: cityKey, value: {title, extract, imgSrc, pageUrl}
+/* ========= Wikipedia cache ========= */
+const wikiCache = new Map();
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
 function wikiCandidates(city){
   const arr=[];
@@ -256,18 +257,15 @@ function wikiCandidates(city){
 }
 async function fetchWikiSummary(title){
   const slug = encodeURIComponent(title.replace(/\s+/g,'_'));
-  const try1 = `https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`;
-  try {
-    const r = await fetch(try1);
-    if (r.ok) {
+  try{
+    const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`);
+    if(r.ok){
       const d = await r.json();
-      const img = (d.originalimage && d.originalimage.source) ? d.originalimage.source
-                : (d.thumbnail && d.thumbnail.source) ? d.thumbnail.source : null;
+      const img = d.originalimage?.source || d.thumbnail?.source || null;
       const page = d.content_urls?.desktop?.page || null;
       return { title: d.title || title, extract: d.extract || 'No summary available.', imgSrc: img, pageUrl: page };
     }
-  } catch(e){}
-  // Fallback: search API then summary of first result
+  }catch(e){}
   try{
     const s = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srprop=&srlimit=1&srsearch=${encodeURIComponent(title)}&format=json&origin=*`);
     const sj = await s.json();
@@ -277,8 +275,7 @@ async function fetchWikiSummary(title){
       const r2 = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug2}?redirect=true`);
       if(r2.ok){
         const d2 = await r2.json();
-        const img2 = (d2.originalimage && d2.originalimage.source) ? d2.originalimage.source
-                  : (d2.thumbnail && d2.thumbnail.source) ? d2.thumbnail.source : null;
+        const img2 = d2.originalimage?.source || d2.thumbnail?.source || null;
         const page2 = d2.content_urls?.desktop?.page || null;
         return { title: d2.title || first, extract: d2.extract || 'No summary available.', imgSrc: img2, pageUrl: page2 };
       }
@@ -304,7 +301,7 @@ function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) retu
 function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
-function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; }  /* removed 'Total error …' */
+function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; }
 function updateScoreBox(){
   guessedCountEl.textContent=guesses.length;
   remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length);
@@ -329,17 +326,9 @@ function resetMapView(){
   provisional = null;
   map.flyTo(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true, duration: 0.9});
 }
-function clearFeedbackLayers(){
-  feedbackLayers.forEach(l => map.removeLayer(l));
-  feedbackLayers = [];
-  if(animMarker){ map.removeLayer(animMarker); animMarker = null; }
-  if(animatedLine){ map.removeLayer(animatedLine); animatedLine = null; }
-}
 function fitToAllGuesses(){
   const pts=[];
-  guesses.forEach(g=>{
-    pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]);
-  });
+  guesses.forEach(g=>{ pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]); });
   if(pts.length){
     const bounds = L.latLngBounds(pts);
     map.flyToBounds(bounds.pad(0.2), {animate:true, duration:1.2});
@@ -351,19 +340,18 @@ function clearResultLayers(){
   resultLayers.forEach(l => map.removeLayer(l));
   resultLayers = [];
 }
+
+/* ========= Results drawing (SVG; OK if they scale once here) ========= */
 function drawResultsLayers(){
   clearResultLayers();
   guesses.forEach(g=>{
     const guessMarker=L.circleMarker([g.guessLat,g.guessLon],{
-      renderer: svgRenderer, updateWhenZooming:true,
       radius:5, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.35
     }).bindTooltip(`Your guess — ${fmtKm(g.distKm)}`,{direction:'top'});
     const trueMarker=L.circleMarker([g.trueLat,g.trueLon],{
-      renderer: svgRenderer, updateWhenZooming:true,
       radius:5, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
     }).bindTooltip(`${cityLabel(g.city)} — true`,{direction:'top'});
     const line=L.polyline([[g.guessLat,g.guessLon],[g.trueLat,g.trueLon]],{
-      renderer: svgRenderer, updateWhenZooming:true,
       weight:2, color:'#f59e0b', opacity:.9, dashArray:'4,4'
     });
     guessMarker.addTo(map); trueMarker.addTo(map); line.addTo(map);
@@ -371,14 +359,44 @@ function drawResultsLayers(){
   });
 }
 
-/* ========= Provisional pin handling ========= */
+/* ========= DOM marker utilities (fixed-size pins) ========= */
+const mapContainer = document.getElementById('map');
+
+function createDomPin(className){
+  const el = document.createElement('div');
+  el.className = `dom-pin ${className}`;
+  mapContainer.appendChild(el);
+  return el;
+}
+function positionDomPin(el, latlng){
+  const p = map.latLngToContainerPoint(latlng);
+  el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`;
+}
+function removeDomPin(el){
+  if(!el) return;
+  if(el.parentNode) el.parentNode.removeChild(el);
+}
+
+/* Keep DOM pins aligned during map motion */
+function refreshDomPins(){
+  if(domGuess) positionDomPin(domGuess.ll, domGuess.latlng);
+  if(domTrue) positionDomPin(domTrue.ll, domTrue.latlng);
+  if(domHead) positionDomPin(domHead.ll, domHead.latlng);
+}
+map.on('move zoom zoomanim resize', refreshDomPins);
+
+/* Wrap element with latlng so refresh can access */
+function attachPin(el, latlng){
+  return { ll: el, latlng };
+}
+
+/* ========= Provisional pin (SVG; only before Confirm) ========= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
-  if(actionMode!=='confirm') return; // no pin during feedback/results
+  if(actionMode!=='confirm') return;
   const lat=e.latlng.lat, lon=e.latlng.lng;
   if(!provisional){
     const marker=L.circleMarker([lat,lon],{
-      renderer: svgRenderer, updateWhenZooming:true,
       radius:7, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.5
     }).bindTooltip('Your pin (click Confirm)', {direction:'top'});
     marker.addTo(map);
@@ -388,6 +406,14 @@ map.on('click',(e)=>{
     provisional.marker.setLatLng([lat,lon]);
   }
 });
+
+/* ========= Feedback layers (DOM pins + SVG line) ========= */
+function clearFeedbackLayers(){
+  if(feedbackPolyline){ map.removeLayer(feedbackPolyline); feedbackPolyline=null; }
+  domMarkers.forEach(removeDomPin);
+  domMarkers = [];
+  domGuess = domTrue = domHead = null;
+}
 
 /* ========= Game flow ========= */
 function startRound(){
@@ -400,17 +426,14 @@ function startRound(){
   const pool = allCities.filter(c => (c.pop ?? 0) >= minPop);
   if(pool.length < num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Shuffle and pick
   const idxs=[...pool.keys()];
   for(let i=idxs.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
   roundCities=idxs.slice(0,num).map(i=>pool[i]);
 
-  // Reset round state
   clearResultLayers(); guesses=[]; totalErrorKm=0; currentIndex=-1; updateScoreBox();
   setTopCity(null); hideFeedbackUI(); actionMode='confirm'; confirmBtn.textContent='Confirm';
   resetMapView();
 
-  // First city immediately
   nextCity();
 }
 function nextCity(){
@@ -437,13 +460,13 @@ async function confirmOrNext(){
   await confirmGuess();
 }
 
-/* ====== Smooth fly + animated line from guess to true (crisp with SVG renderer) ====== */
+/* ====== Smooth fly + animated head (DOM) + line (SVG) ====== */
 function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
 function lerp(a,b,t){ return a + (b-a)*t; }
 function lerpLatLng(a,b,t){ return [ lerp(a[0],b[0],t), lerp(a[1],b[1],t) ]; }
 
-async function smoothReveal(guess, truth){
-  // Step 1: ensure both points visible
+async function smoothRevealDOM(guess, truth){
+  // Ensure both visible
   const bounds = L.latLngBounds([guess, truth]).pad(0.25);
   const bothVisible = map.getBounds().contains(guess) && map.getBounds().contains(truth);
   if(!bothVisible){
@@ -453,8 +476,8 @@ async function smoothReveal(guess, truth){
     });
   }
 
-  // Step 2: fly to true location while animating the line head
-  const duration = 1200; // ms
+  // Fly to true location while animating head and polyline
+  const duration = 1200;
   const start = performance.now();
   map.flyTo(truth, 9, {animate:true, duration: duration/1000});
 
@@ -463,10 +486,16 @@ async function smoothReveal(guess, truth){
       const t = Math.min(1, (ts - start)/duration);
       const e = easeInOutCubic(t);
       const cur = lerpLatLng(guess, truth, e);
-      animMarker.setLatLng(cur);
-      animatedLine.setLatLngs([guess, cur]);
+
+      // Update DOM head
+      domHead.latlng = L.latLng(cur[0], cur[1]);
+      positionDomPin(domHead.ll, domHead.latlng);
+
+      // Update SVG line end
+      feedbackPolyline.setLatLngs([guess, cur]);
+
       if(t<1){ requestAnimationFrame(step); }
-      else { animatedLine.setLatLngs([guess, truth]); res(); }
+      else { feedbackPolyline.setLatLngs([guess, truth]); res(); }
     }
     requestAnimationFrame(step);
   });
@@ -485,32 +514,27 @@ async function confirmGuess(){
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm});
   totalErrorKm+=dKm; updateScoreBox();
 
-  // Feedback layers (crisp SVG, redraw during zoom)
+  // Remove provisional SVG pin
   if(provisional.marker){ map.removeLayer(provisional.marker); }
+  provisional = null;
+
   const guessPt = [guessLat, guessLon];
   const truePt  = [trueLat, trueLon];
 
-  const guessMarker=L.circleMarker(guessPt,{
-    renderer: svgRenderer, updateWhenZooming:true,
-    radius:6, weight:2, color:'#6aa0ff', fillColor:'#6aa0ff', fillOpacity:0.4
-  }).bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+  // Create DOM pins (fixed-size, no zoom scaling)
+  const gEl = createDomPin('guess'); const tEl = createDomPin('true'); const hEl = createDomPin('head');
+  domMarkers.push(gEl,tEl,hEl);
+  domGuess = attachPin(gEl, L.latLng(guessPt[0], guessPt[1]));
+  domTrue  = attachPin(tEl, L.latLng(truePt[0],  truePt[1]));
+  domHead  = attachPin(hEl, L.latLng(guessPt[0], guessPt[1]));
+  positionDomPin(domGuess.ll, domGuess.latlng);
+  positionDomPin(domTrue.ll,  domTrue.latlng);
+  positionDomPin(domHead.ll,  domHead.latlng);
 
-  const trueMarker=L.circleMarker(truePt,{
-    renderer: svgRenderer, updateWhenZooming:true,
-    radius:6, weight:2, color:'#22c55e', fillColor:'#22c55e', fillOpacity:0.5
-  }).bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
-
-  animatedLine = L.polyline([guessPt, guessPt],{
-    renderer: svgRenderer, updateWhenZooming:true,
+  // SVG polyline for path (crisp)
+  feedbackPolyline = L.polyline([guessPt, guessPt],{
     weight:2.5, color:'#f59e0b', opacity:.95, dashArray:'4,4'
   }).addTo(map);
-
-  animMarker = L.circleMarker(guessPt,{
-    renderer: svgRenderer, updateWhenZooming:true,
-    radius:4.5, weight:2, color:'#f59e0b', fillColor:'#f59e0b', fillOpacity:0.9
-  }).addTo(map);
-
-  feedbackLayers.push(guessMarker,trueMarker,animatedLine,animMarker);
 
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
 
@@ -519,10 +543,10 @@ async function confirmGuess(){
   showFeedbackUI();
   populateWikiFromCache(c);
 
-  // Smooth reveal (fit both if needed, then fly + animate line)
-  await smoothReveal(guessPt, truePt);
+  // Smooth, stylish reveal
+  await smoothRevealDOM(guessPt, truePt);
 
-  // Button state: Next city or See results if last
+  // Button state
   const isLast = (currentIndex === roundCities.length - 1);
   actionMode = isLast ? 'results' : 'next';
   confirmBtn.textContent = isLast ? 'See results' : 'Next city';
@@ -555,7 +579,7 @@ function populateWikiFromCache(city){
 /* ========= Results view ========= */
 function showRoundResults(){
   hideFeedbackUI();
-  clearFeedbackLayers(); // remove current city's overlays
+  clearFeedbackLayers();
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
   fitToAllGuesses();
@@ -572,8 +596,8 @@ function parseAdmin1(text){
   for(const line of lines){
     if(!line || !line.includes('\t')) continue;
     const parts = line.split('\t');
-    const key = parts[0]?.trim();   // e.g., "US.CA"
-    const name = parts[1]?.trim();  // "California"
+    const key = parts[0]?.trim();
+    const name = parts[1]?.trim();
     if(key && name) map[key] = name;
   }
   return map;
@@ -630,8 +654,7 @@ function loadCSV(url){
       const cities = parseRowsToCities(res.data);
       if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
       allCities = cities;
-      // Auto-start immediately
-      startRound();
+      startRound(); // auto-start
     },
     error: function(err){ console.error(err); alert('Error loading dataset.'); }
   });
@@ -648,11 +671,10 @@ window.addEventListener('DOMContentLoaded', boot);
 /* ========= Controls ========= */
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
-  // Clear overlays, keep current round
   clearFeedbackLayers();
   clearResultLayers();
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
-  resetMapView();
+  map.flyTo(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true, duration: 0.9});
 });
 </script>
 </body>
