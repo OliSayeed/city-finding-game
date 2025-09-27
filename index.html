@@ -70,8 +70,27 @@
   }
   .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
   .section { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+
+  #map { height: calc(100vh - 56px); width: 100%; }
+
   h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: .2px; }
   .muted { color: var(--muted); font-size: 13px; }
+
+  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
+  .scorecard .big { font-size: 22px; font-weight: 700; }
+
+  /* Wikipedia sidebar panel (now replaces upper-left content) */
+  .wiki-side {
+    display: grid; gap: 10px;
+  }
+  .wiki-title { font-weight: 700; margin: 0; font-size: 16px; }
+  .wiki-image { width: 100%; border-radius: 10px; display: none; }
+  .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.45; max-height: 28vh; overflow: auto; }
+  .wiki-actions { display:flex; gap:10px; }
+  .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
+
+  /* Controls moved BELOW Round status */
   .controls label { display: block; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
   .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .controls input[type="number"] {
@@ -79,27 +98,6 @@
     border-radius: 10px; color: var(--text);
   }
   .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
-
-  #map { height: calc(100vh - 56px); width: 100%; }
-
-  .scorebox { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .scorecard { background: #0d0f13; border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; }
-  .scorecard .big { font-size: 22px; font-weight: 700; }
-
-  /* Wikipedia panel */
-  .wiki-panel {
-    position: fixed; z-index: 1100; right: 16px; bottom: 16px; width: min(420px, 92vw);
-    background: #0d0f13; border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.45);
-    display: none;
-  }
-  .wiki-panel.open { display: block; }
-  .wiki-title { font-weight: 700; margin: 0 0 6px; font-size: 16px; }
-  .wiki-image { width: 100%; border-radius: 10px; display: none; margin-bottom: 8px; }
-  .wiki-extract { font-size: 13px; color: var(--muted); line-height: 1.4; }
-  .wiki-actions { margin-top: 8px; display: flex; gap: 8px; }
-  .wiki-actions a { text-decoration: none; color: var(--text); font-weight: 600; }
-  .wiki-close { margin-left: auto; }
 
   @media (max-width: 1000px) {
     .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
@@ -122,12 +120,32 @@
 
 <div class="app">
   <aside class="sidebar">
+    <!-- Wikipedia panel (replaces upper-left content) -->
     <div class="section">
-      <h1>City finding game</h1>
-      <div class="muted">Pick a difficulty and start a round.</div>
+      <div class="wiki-side">
+        <div class="wiki-title" id="wikiTitle">Wikipedia</div>
+        <img id="wikiImg" class="wiki-image" alt="Place image" />
+        <div class="wiki-extract" id="wikiExtract">Confirm a guess to see info about the city here.</div>
+        <div class="wiki-actions" id="wikiActions" style="display:none;">
+          <a id="wikiLink" target="_blank" rel="noopener">Open on Wikipedia</a>
+        </div>
+      </div>
     </div>
 
+    <!-- Round status -->
+    <div class="section">
+      <h1>Round status</h1>
+      <div class="scorebox" style="margin-bottom:10px;">
+        <div class="scorecard"><div class="muted">Guessed</div><div id="guessedCount" class="big">0</div></div>
+        <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
+        <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
+      </div>
+      <div id="summary" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- Controls moved below Round status -->
     <div class="section controls">
+      <h1>Controls</h1>
       <label>Difficulty (population threshold)</label>
       <div class="radio-group" id="difficultyGroup" style="display:grid;gap:6px;margin-top:8px;">
         <label class="radio-item" style="display:flex;align-items:center;gap:8px;">
@@ -161,32 +179,9 @@
         <button id="resetBtn" class="btn">Clear Map</button>
       </div>
     </div>
-
-    <div class="section">
-      <h1>Round status</h1>
-      <div class="scorebox" style="margin-bottom:10px;">
-        <div class="scorecard"><div class="muted">Guessed</div><div id="guessedCount" class="big">0</div></div>
-        <div class="scorecard"><div class="muted">Remaining</div><div id="remainingCount" class="big">0</div></div>
-        <div class="scorecard"><div class="muted">Total error</div><div id="totalError" class="big">0 km</div></div>
-      </div>
-      <div id="summary" style="margin-top:10px;"></div>
-    </div>
   </aside>
 
   <div id="map"></div>
-</div>
-
-<!-- Wikipedia panel -->
-<div id="wikiPanel" class="wiki-panel">
-  <div style="display:flex;gap:8px;align-items:center;">
-    <div class="wiki-title" id="wikiTitle">Wikipedia</div>
-    <button class="btn wiki-close" id="wikiClose">Close</button>
-  </div>
-  <img id="wikiImg" class="wiki-image" alt="Place image" />
-  <div class="wiki-extract" id="wikiExtract">Loading…</div>
-  <div class="wiki-actions" id="wikiActions" style="display:none;">
-    <a id="wikiLink" target="_blank" rel="noopener">Open on Wikipedia</a>
-  </div>
 </div>
 
 <script>
@@ -356,8 +351,8 @@ async function confirmGuess(){
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   map.setView([trueLat,trueLon], 8, { animate:true });
 
-  // Wikipedia panel (with image)
-  openWikiPanel(c);
+  // Wikipedia panel (sidebar) with image + longer text
+  openWikiSidePanel(c);
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm,layers:{guessMarker,trueMarker,line}});
   totalErrorKm+=dKm; updateScoreBox();
@@ -367,22 +362,20 @@ async function confirmGuess(){
   actionMode='next';
   confirmBtn.textContent='Next city';
 }
+confirmBtn.addEventListener('click', confirmOrNext);
 
-/* ========= Wikipedia panel ========= */
-const wikiPanel = document.getElementById('wikiPanel');
+/* ========= Wikipedia (sidebar) ========= */
 const wikiTitle = document.getElementById('wikiTitle');
 const wikiExtract = document.getElementById('wikiExtract');
 const wikiLink = document.getElementById('wikiLink');
 const wikiActions = document.getElementById('wikiActions');
 const wikiImg = document.getElementById('wikiImg');
-document.getElementById('wikiClose').addEventListener('click', ()=>{ wikiPanel.classList.remove('open'); });
 
-async function openWikiPanel(city){
+async function openWikiSidePanel(city){
   wikiTitle.textContent = cityLabel(city);
   wikiExtract.textContent = 'Loading…';
   wikiActions.style.display='none';
   wikiImg.style.display='none'; wikiImg.removeAttribute('src');
-  wikiPanel.classList.add('open');
 
   const candidates = [];
   if(city.sub && city.country){ candidates.push(`${city.name}, ${city.sub}, ${city.country}`); }
@@ -392,25 +385,37 @@ async function openWikiPanel(city){
 
   for(const t of candidates){
     try{
-      const title = encodeURIComponent(t.replace(/\s+/g,'_'));
-      const resp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`);
-      if(resp.ok){
-        const data = await resp.json();
-        wikiTitle.textContent = data.title || cityLabel(city);
-        wikiExtract.textContent = data.extract || 'No summary available.';
-        if(data.thumbnail && data.thumbnail.source){
-          wikiImg.src = data.thumbnail.source;
-          wikiImg.style.display='block';
-        }
-        if(data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page){
-          wikiLink.href = data.content_urls.desktop.page;
-          wikiActions.style.display='flex';
-        }else{
-          wikiActions.style.display='none';
-        }
-        return;
+      const titleSlug = encodeURIComponent(t.replace(/\s+/g,'_'));
+      const resp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${titleSlug}`);
+      if(!resp.ok) continue;
+      const data = await resp.json();
+
+      // Title + text
+      wikiTitle.textContent = data.title || cityLabel(city);
+      // Prefer the 'extract' (plain summary). If empty, show fallback message.
+      wikiExtract.textContent = data.extract && data.extract.length ? data.extract : 'No summary available.';
+
+      // Lead image: prefer 'originalimage' if present (larger), else 'thumbnail'
+      const imgSrc = (data.originalimage && data.originalimage.source) ? data.originalimage.source
+                   : (data.thumbnail && data.thumbnail.source) ? data.thumbnail.source
+                   : null;
+      if(imgSrc){
+        wikiImg.src = imgSrc;
+        wikiImg.style.display='block';
       }
-    }catch(e){ /* try next candidate */ }
+
+      // Link
+      const pageUrl = data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page;
+      if(pageUrl){
+        wikiLink.href = pageUrl;
+        wikiActions.style.display='flex';
+      }else{
+        wikiActions.style.display='none';
+      }
+      return;
+    }catch(e){
+      // try next candidate
+    }
   }
   wikiExtract.textContent = 'No summary found on Wikipedia.';
   wikiActions.style.display='none';
@@ -505,11 +510,13 @@ window.addEventListener('DOMContentLoaded', boot);
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
   clearMapLayers(); resetRoundUI();
-  // Hide wiki + remove labels overlay
-  document.getElementById('wikiPanel').classList.remove('open');
+  // Clear wiki panel
+  document.getElementById('wikiTitle').textContent = 'Wikipedia';
+  document.getElementById('wikiExtract').textContent = 'Confirm a guess to see info about the city here.';
+  const img = document.getElementById('wikiImg'); img.style.display='none'; img.removeAttribute('src');
+  const wacts = document.getElementById('wikiActions'); wacts.style.display='none';
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
 });
-confirmBtn.addEventListener('click', confirmOrNext);
 </script>
 </body>
 </html>
