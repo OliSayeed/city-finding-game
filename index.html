@@ -102,7 +102,7 @@
 
     <div id="wikiSection" class="section">
       <div id="wikiSide" class="wiki-side">
-        <div class="wiki-title" id="wikiTitle">Wikipedia</div>
+        <div class="wiki-title" id="wikiTitle"></div>
         <img id="wikiImg" class="wiki-image" alt="Place image" loading="lazy"/>
         <div class="wiki-extract" id="wikiExtract"></div>
         <div class="wiki-actions" id="wikiActions" style="display:none;">
@@ -157,7 +157,7 @@ const wikiSide=document.getElementById('wikiSide');
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 
-/* ======= Wikipedia (multistep; unchanged in spirit) ======= */
+/* ======= Wikipedia (multistep chooser; title hidden while loading) ======= */
 const WIKI_TIMEOUT_MS=5000;
 const wikiCache=new Map();
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
@@ -243,6 +243,7 @@ async function chooseBestWiki(city){
   try{ const p=await geoSearchBest(city); if(p) return p; }catch(e){}
   return null;
 }
+
 async function showWikipediaPanel(city){
   const wikiTitle=document.getElementById('wikiTitle');
   const wikiExtract=document.getElementById('wikiExtract');
@@ -250,15 +251,17 @@ async function showWikipediaPanel(city){
   const wikiActions=document.getElementById('wikiActions');
   const wikiImg=document.getElementById('wikiImg');
 
-  wikiTitle.textContent = city.sub ? `${city.name} — ${city.sub}` : city.name;
+  // *** Change requested: keep TITLE BLANK while loading ***
+  wikiTitle.textContent = '';           // (previously cityLabel(city))
   wikiExtract.textContent = 'Loading…';
-  wikiImg.style.display='none'; wikiImg.removeAttribute('src'); wikiActions.style.display='none';
+  wikiImg.style.display='none'; wikiImg.removeAttribute('src');
+  wikiActions.style.display='none';
 
   const key=cityKey(city);
   if(wikiCache.has(key)){
     const info=wikiCache.get(key);
-    wikiTitle.textContent=info.title||wikiTitle.textContent;
-    wikiExtract.textContent=info.extract||'No summary available.';
+    wikiTitle.textContent=info.title || '';
+    wikiExtract.textContent=info.extract || 'No summary available.';
     if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; }
     if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; }
     return;
@@ -283,16 +286,17 @@ async function showWikipediaPanel(city){
         });
       }
     }else{
-      wikiCache.set(key,{title:city.name,extract:'No summary found on Wikipedia.',imgSrc:null,pageUrl:null});
+      wikiCache.set(key,{title:'',extract:'No summary found on Wikipedia.',imgSrc:null,pageUrl:null});
     }
     const info=wikiCache.get(key);
-    wikiTitle.textContent=info.title||wikiTitle.textContent;
-    wikiExtract.textContent=info.extract||'No summary available.';
+    wikiTitle.textContent=info.title || '';
+    wikiExtract.textContent=info.extract || 'No summary available.';
     if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; }
     if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; }
   }catch(e){
-    wikiTitle.textContent=city.sub ? `${city.name} — ${city.sub}` : city.name;
-    wikiExtract.textContent='No summary found on Wikipedia.'; wikiImg.style.display='none'; wikiActions.style.display='none';
+    wikiTitle.textContent=''; // keep blank on errors too
+    wikiExtract.textContent='No summary found on Wikipedia.';
+    wikiImg.style.display='none'; wikiActions.style.display='none';
   }
 }
 
@@ -355,7 +359,6 @@ function startRound(){
   const pool=allCities.filter(c=>(c.pop??0)>=minPop);
   if(pool.length<num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Fisher–Yates shuffle
   const idx=[...pool.keys()];
   for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
   roundCities=idx.slice(0,num).map(i=>pool[i]);
@@ -429,27 +432,6 @@ function parseAdmin1(text){
   }); return map;
 }
 
-/* Flexible column detection */
-function detectColumns(headers){
-  const H=headers.map(h=>normalizeHeader(h));
-  const nameKeys = [/^name$/i,/^ascii\s*name$/i,/^city$/i,/^placename$/i];
-  const latKeys  = [/^lat$/i,/^latitude$/i,/^lat\s*\(deg\)$/i,/^y$/i];
-  const lonKeys  = [/^lon$/i,/^long$/i,/^lng$/i,/^longitude$/i,/^x$/i];
-
-  function findKey(regexes){
-    for(const rx of regexes){
-      const i = H.findIndex(h=>rx.test(h));
-      if(i!==-1) return H[i];
-    }
-    return null;
-  }
-  return {
-    nameKey: findKey(nameKeys),
-    latKey:  findKey(latKeys),
-    lonKey:  findKey(lonKeys)
-  };
-}
-
 function extractSubdivision(row){
   const cc = (row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
   const a1 = (row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
@@ -474,18 +456,14 @@ function parseRowsToCities(rows){
     const keys = Object.keys(r);
     if(!keys.length) continue;
 
-    // Pull likely fields by scanning keys each row (handles occasional column label drift)
     const lower = {}; for(const k of keys){ lower[normalizeHeader(k).toLowerCase()] = k; }
 
     const name = (r[lower['name']] ?? r[lower['ascii name']] ?? r[lower['city']] ?? r[lower['placename']] ?? '').toString().trim();
     if(!name) continue;
 
-    // latitude
     let latRaw = r[lower['lat']] ?? r[lower['latitude']] ?? r[lower['lat (deg)']] ?? r[lower['y']];
-    // longitude
     let lonRaw = r[lower['lon']] ?? r[lower['long']] ?? r[lower['lng']] ?? r[lower['longitude']] ?? r[lower['x']];
 
-    // Try "Coordinates" fallback if needed
     if((latRaw==null || lonRaw==null) && (r['Coordinates']!=null || r['Coordinates ']!=null)){
       const coordStr = (r['Coordinates'] ?? r['Coordinates ']).toString();
       const parts = coordStr.split(',',2); if(parts.length===2){ latRaw=parts[0].trim(); lonRaw=parts[1].trim(); }
@@ -496,7 +474,6 @@ function parseRowsToCities(rows){
     if(!isFinite(lat) || !isFinite(lon)) continue;
     if(lat<-90 || lat>90 || lon<-180 || lon>180) continue;
 
-    // population (optional)
     const popRaw = r['Population'] ?? r['population'] ?? r['pop'] ?? r['Population '] ?? r['POP'] ?? null;
     const pop = Number.isFinite(parseInt(popRaw,10)) ? parseInt(popRaw,10) : null;
 
@@ -508,22 +485,13 @@ function parseRowsToCities(rows){
   return out;
 }
 
-async function loadAdmin(){
-  try{
-    const resp = await fetch('admin1CodesASCII.txt');
-    if(resp.ok){ adminMap = parseAdmin1(await resp.text()); }
-  }catch(e){ console.warn('Admin1 not loaded (ok):', e); }
-}
-
 function tryParseCSV(url, resolve, reject){
   Papa.parse(url,{
     download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
     complete: function(res){
       try{
-        const text = res?.data && res.data.length ? null : res?.meta?.cursor; // not reliable; we double-check via fetch below when needed
         const fields = res.meta?.fields || [];
         if(!fields.length){
-          // Papa might have parsed an empty/HTML file; fetch raw to confirm
           fetch(url).then(r=>r.text()).then(t=>{
             if(looksLikeHTML(t)){ reject(new Error(`Fetched HTML instead of CSV from "${url}". Is the file path correct?`)); }
             else reject(new Error(`No header row detected in "${url}".`));
@@ -547,7 +515,6 @@ function tryParseCSV(url, resolve, reject){
     error: function(err){ reject(err); }
   });
 }
-
 async function loadCSVWithFallbacks(){
   let lastErr=null;
   for(const url of DATA_CANDIDATES){
@@ -560,6 +527,12 @@ async function loadCSVWithFallbacks(){
     }
   }
   throw lastErr || new Error('Failed to load any CSV candidate.');
+}
+async function loadAdmin(){
+  try{
+    const resp = await fetch('admin1CodesASCII.txt');
+    if(resp.ok){ adminMap = parseAdmin1(await resp.text()); }
+  }catch(e){ console.warn('Admin1 not loaded (ok):', e); }
 }
 
 /* ======= Boot ======= */
