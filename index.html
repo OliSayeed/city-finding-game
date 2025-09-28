@@ -137,12 +137,31 @@ const PREFETCH_TIMEOUT_MS = 2200;
 function haversineKm(lat1,lon1,lat2,lon2){
   const R=6371, toRad=d=>d*Math.PI/180;
   const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
-  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(Math.abs(dLon)/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
 }
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
 function stripDiacritics(s){ return s.normalize('NFD').replace(/\p{Diacritic}/gu,''); }
 const WORLD_VIEW={center:[20,0],zoom:2};
+
+/* ======= Variable-duration fly ======= */
+function variableFlyTo(map, targetLat, targetLon, targetZoom){
+  const cur = map.getCenter();
+  const curZoom = map.getZoom();
+  const distKm = haversineKm(cur.lat, cur.lng, targetLat, targetLon);
+
+  // Tunables:
+  // - speed in km/s along the great-circle (bigger => faster)
+  // - additive factor for zoom delta
+  // - clamp to keep durations pleasant
+  const SPEED_KM_PER_S = 2500; // ~6s max for antipodal, ~1–3s typical moves
+  const ZOOM_SEC_PER_LEVEL = 0.12;
+  let dur = (distKm / SPEED_KM_PER_S) + (Math.abs(targetZoom - curZoom) * ZOOM_SEC_PER_LEVEL);
+  dur = Math.max(0.9, Math.min(4.8, dur));
+
+  map.flyTo([targetLat, targetLon], targetZoom, { animate:true, duration:dur, easeLinearity:0.22 });
+  return dur;
+}
 
 /* ======= Map ======= */
 const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
@@ -466,15 +485,15 @@ async function confirmGuess(){
   showFeedbackUI();
   showWikipediaPanel(c);
 
-  // *** CHANGE: Turn on labels immediately (at start of the fly) ***
+  // Turn on labels immediately (start of the fly)
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
 
-  // Ensure we don't drop overlays from a previous fly
+  // Token to avoid overlay drop after interrupt
   const myToken = ++activeFlyToken;
 
-  // After fly finishes, add markers/line (so they don't scale during zoom)
+  // After fly finishes, add markers/line so they don't scale during zoom
   const onFlyEnd = ()=>{
-    if(myToken !== activeFlyToken) return; // canceled by a reset/next
+    if(myToken !== activeFlyToken) return;
     const gm=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
       .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
     const tm=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
@@ -485,8 +504,8 @@ async function confirmGuess(){
   const onceHandler = ()=>{ map.off('moveend', onceHandler); onFlyEnd(); };
   map.on('moveend', onceHandler);
 
-  // Smooth camera
-  map.flyTo([trueLat,trueLon], 9, {animate:true, duration:2.6, easeLinearity:0.2});
+  // Variable-duration camera based on distance + zoom delta
+  variableFlyTo(map, trueLat, trueLon, 9);
 
   const isLast=(currentIndex===roundCities.length-1);
   actionMode=isLast?'results':'next';
@@ -547,7 +566,7 @@ function parseRowsToCities(rows){
     let lonRaw = r[lower['lon']] ?? r[lower['long']] ?? r[lower['lng']] ?? r[lower['longitude']] ?? r[lower['x']];
 
     if((latRaw==null || lonRaw==null) && (r['Coordinates']!=null || r['Coordinates ']!=null)){
-      const coordStr = (r['Coordinates'] ?? r['Coordinates ']).toString();
+      const coordStr = (r['Coordinates'] ?? r['Coordinates '']).toString();
       const parts = coordStr.split(',',2); if(parts.length===2){ latRaw=parts[0].trim(); lonRaw=parts[1].trim(); }
     }
 
