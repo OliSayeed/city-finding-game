@@ -130,8 +130,8 @@
 <script>
 /* ======= Config ======= */
 const DATA_CANDIDATES = ['geonames_10k.csv', 'data/geonames_10k.csv'];
-const WIKI_TIMEOUT_MS = 5000;       // full chooser calls
-const PREFETCH_TIMEOUT_MS = 2200;   // quick background prefetch
+const WIKI_TIMEOUT_MS = 5000;
+const PREFETCH_TIMEOUT_MS = 2200;
 
 /* ======= Utilities ======= */
 function haversineKm(lat1,lon1,lat2,lon2){
@@ -154,6 +154,7 @@ map.setMaxBounds([[-85,-200],[85,200]]);
 let adminMap={}, allCities=[], roundCities=[], currentIndex=-1, guesses=[];
 let provisional=null, actionMode='confirm';
 let feedbackLayers=[], resultLayers=[];
+let activeFlyToken = 0; // cancels delayed overlay drops when user moves on
 
 const currentCityTopEl=document.getElementById('currentCityTop');
 const confirmBtn=document.getElementById('confirmBtn');
@@ -165,7 +166,6 @@ const remainingCountEl=document.getElementById('remainingCount');
 /* ======= Wikipedia chooser + prefetch ======= */
 const wikiCache=new Map();
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
-
 function abortableFetch(url,opts={},timeoutMs=WIKI_TIMEOUT_MS){
   const c=new AbortController(); const id=setTimeout(()=>c.abort(),timeoutMs);
   return fetch(url,{...opts,signal:c.signal}).finally(()=>clearTimeout(id));
@@ -212,8 +212,8 @@ async function fetchPagesInfoByTitlesT(titles, timeoutMs){
   const info=await mwApiT({
     action:'query',
     prop:'coordinates|description|pageimages|info',
-    piprop:'thumbnail',          // prefer thumbnail for speed
-    pithumbsize:480,             // lighter image
+    piprop:'thumbnail',
+    pithumbsize:480,
     inprop:'url',
     titles:Array.from(new Set(titles)).slice(0,40).join('|')
   }, timeoutMs);
@@ -278,24 +278,20 @@ async function chooseBestWiki(city){
   return null;
 }
 
-/* Prefetch (quick, silent) while user is placing pin */
+/* Prefetch while user is placing pin */
 async function prefetchWikipedia(city){
   const key=cityKey(city);
   if(wikiCache.has(key)) return;
   try{
-    // Fast path: exact title (short timeout)
     let best = await tryExactTitleT(city, city.name, PREFETCH_TIMEOUT_MS);
-    if(!best){
-      // quick intitle fallback (short timeout)
-      best = await searchTitlesT(city, `intitle:"${city.name}"`, PREFETCH_TIMEOUT_MS);
-    }
+    if(!best) best = await searchTitlesT(city, `intitle:"${city.name}"`, PREFETCH_TIMEOUT_MS);
     if(best){
       try{
         const d = await restSummaryT(best.title, PREFETCH_TIMEOUT_MS);
         wikiCache.set(key,{
           title:d.title||best.title,
           extract:d.extract||best.description||'',
-          imgSrc:d.thumbnail?.source || null,        // prefer thumbnail for speed
+          imgSrc:d.thumbnail?.source || null,
           pageUrl:d.content_urls?.desktop?.page || best.fullurl || null
         });
       }catch(_){
@@ -317,14 +313,12 @@ async function showWikipediaPanel(city){
   const wikiActions=document.getElementById('wikiActions');
   const wikiImg=document.getElementById('wikiImg');
 
-  // Keep title blank while loading
   wikiTitle.textContent = '';
   wikiExtract.textContent = 'Loading…';
   wikiImg.style.display='none'; wikiImg.removeAttribute('src');
   wikiActions.style.display='none';
 
   const key=cityKey(city);
-  // If prefetch already filled the cache, show instantly
   if(wikiCache.has(key)){
     const info=wikiCache.get(key);
     wikiTitle.textContent=info.title || '';
@@ -334,7 +328,6 @@ async function showWikipediaPanel(city){
     return;
   }
 
-  // Full chooser (slower, but accurate) if cache missed
   try{
     const best=await chooseBestWiki(city);
     if(best){
@@ -343,7 +336,7 @@ async function showWikipediaPanel(city){
         wikiCache.set(key,{
           title:d.title||best.title,
           extract:d.extract||best.description||'No summary available.',
-          imgSrc:d.thumbnail?.source || null,                   // prefer thumbnail
+          imgSrc:d.thumbnail?.source || null,
           pageUrl:d.content_urls?.desktop?.page || best.fullurl || null
         });
       }catch(e){
@@ -383,6 +376,7 @@ function resetMapView(){
   feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
   if(provisional && provisional.marker) map.removeLayer(provisional.marker);
   provisional=null;
+  activeFlyToken++; // cancel any pending post-fly overlays
   map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
 }
 function fitToAllGuesses(){
@@ -427,7 +421,6 @@ function startRound(){
   const pool=allCities.filter(c=>(c.pop??0)>=minPop);
   if(pool.length<num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
-  // Shuffle
   const idx=[...pool.keys()];
   for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
   roundCities=idx.slice(0,num).map(i=>pool[i]);
@@ -437,14 +430,12 @@ function startRound(){
   resetMapView();
   nextCity();
 }
-
 function nextCity(){
   currentIndex++; actionMode='confirm'; confirmBtn.textContent='Confirm'; hideFeedbackUI(); resetMapView();
   if(currentIndex>=roundCities.length){ setTopRoundSummary(); return; }
   const city=roundCities[currentIndex];
   setTopCity(city); updateScoreBox();
-  // kick off a quick, silent prefetch while the user is thinking
-  prefetchWikipedia(city);
+  prefetchWikipedia(city); // silent prefetch
 }
 
 /* ======= Confirm / Next / Results / Restart ======= */
@@ -465,22 +456,42 @@ async function confirmGuess(){
   const dKm=haversineKm(guessLat,guessLon,trueLat,trueLon);
 
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm}); updateScoreBox();
-  if(provisional.marker) map.removeLayer(provisional.marker);
 
-  const gm=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
-    .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
-  const tm=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
-    .bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
-  const ln=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
-  feedbackLayers.push(gm,tm,ln);
-  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+  // Remove provisional pin immediately
+  if(provisional?.marker) { map.removeLayer(provisional.marker); }
+  provisional=null;
 
-  // Smooth, slightly slower camera so there's something to watch
-  map.flyTo([trueLat,trueLon], 9, {animate:true, duration:2.6, easeLinearity:0.2});
-
+  // Start feedback UI + load wiki while camera flies
   setTopDistance(dKm);
   showFeedbackUI();
-  showWikipediaPanel(c); // uses cache if prefetch succeeded
+  showWikipediaPanel(c);
+
+  // Ensure we don't drop overlays from a previous fly
+  const myToken = ++activeFlyToken;
+
+  // Fly first; only after the fly finishes do we add markers/line/labels
+  const onFlyEnd = ()=>{
+    // If another action happened (next city / reset), bail
+    if(myToken !== activeFlyToken) return;
+
+    // Add labels after fly to avoid popping while zooming
+    if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+
+    // Draw feedback overlays now (no scaling during zoom)
+    const gm=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
+      .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
+    const tm=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
+      .bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
+    const ln=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
+    feedbackLayers.push(gm,tm,ln);
+  };
+
+  // Attach one-time handler with a fallback timer in case moveend fires instantly
+  const onceHandler = ()=>{ map.off('moveend', onceHandler); onFlyEnd(); };
+  map.on('moveend', onceHandler);
+
+  // Smooth camera
+  map.flyTo([trueLat,trueLon], 9, {animate:true, duration:2.6, easeLinearity:0.2});
 
   const isLast=(currentIndex===roundCities.length-1);
   actionMode=isLast?'results':'next';
@@ -490,6 +501,8 @@ async function confirmGuess(){
 /* ======= Results ======= */
 function showRoundResults(){
   hideFeedbackUI();
+  // Cancel any pending post-fly overlays and clear current feedback
+  activeFlyToken++;
   feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
@@ -502,7 +515,6 @@ function showRoundResults(){
 /* ======= Data loading (robust) ======= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
 function looksLikeHTML(text){ return /^\s*<!doctype html>|^\s*<html/i.test(text); }
-
 function parseAdmin1(text){
   const map={}; text.split(/\r?\n/).forEach(line=>{
     if(!line || !line.includes('\t')) return;
