@@ -154,7 +154,7 @@ map.setMaxBounds([[-85,-200],[85,200]]);
 let adminMap={}, allCities=[], roundCities=[], currentIndex=-1, guesses=[];
 let provisional=null, actionMode='confirm';
 let feedbackLayers=[], resultLayers=[];
-let activeFlyToken = 0; // cancels delayed overlay drops when user moves on
+let activeFlyToken = 0;
 
 const currentCityTopEl=document.getElementById('currentCityTop');
 const confirmBtn=document.getElementById('confirmBtn');
@@ -461,23 +461,20 @@ async function confirmGuess(){
   if(provisional?.marker) { map.removeLayer(provisional.marker); }
   provisional=null;
 
-  // Start feedback UI + load wiki while camera flies
+  // Start feedback UI + load wiki
   setTopDistance(dKm);
   showFeedbackUI();
   showWikipediaPanel(c);
 
+  // *** CHANGE: Turn on labels immediately (at start of the fly) ***
+  if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
+
   // Ensure we don't drop overlays from a previous fly
   const myToken = ++activeFlyToken;
 
-  // Fly first; only after the fly finishes do we add markers/line/labels
+  // After fly finishes, add markers/line (so they don't scale during zoom)
   const onFlyEnd = ()=>{
-    // If another action happened (next city / reset), bail
-    if(myToken !== activeFlyToken) return;
-
-    // Add labels after fly to avoid popping while zooming
-    if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
-
-    // Draw feedback overlays now (no scaling during zoom)
+    if(myToken !== activeFlyToken) return; // canceled by a reset/next
     const gm=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
       .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
     const tm=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
@@ -485,8 +482,6 @@ async function confirmGuess(){
     const ln=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
     feedbackLayers.push(gm,tm,ln);
   };
-
-  // Attach one-time handler with a fallback timer in case moveend fires instantly
   const onceHandler = ()=>{ map.off('moveend', onceHandler); onFlyEnd(); };
   map.on('moveend', onceHandler);
 
@@ -501,8 +496,7 @@ async function confirmGuess(){
 /* ======= Results ======= */
 function showRoundResults(){
   hideFeedbackUI();
-  // Cancel any pending post-fly overlays and clear current feedback
-  activeFlyToken++;
+  activeFlyToken++; // cancel any pending overlay drops
   feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
