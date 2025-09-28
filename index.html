@@ -35,7 +35,7 @@
   .current-city{position:absolute;left:50%;transform:translateX(-50%);text-align:center;max-width:calc(100vw - 360px);}
   .current-city .cty{color:#fff;} .current-city .sub{color:var(--muted);font-weight:600;margin-left:8px;}
   .topbar-right{width:180px;display:flex;justify-content:flex-end;}
-  .btn{appearance:none;border:none;cursor:pointer;padding:10px 12px;border-radius:12px;background:#1a2233;color:var(--text);
+  .btn{appearance:none;border:none;cursor:pointer;padding:10px 12px;border-radius:12px;background:#1a2233;color:#fff;
        transition:transform .02s ease,opacity .2s ease,background .2s ease;font-weight:600;letter-spacing:.2px;}
   .btn:hover{background:#1d2740;} .btn:active{transform:translateY(1px);} .btn.accent{background:var(--accent);color:#081021;}
 
@@ -125,7 +125,10 @@
 </div>
 
 <script>
-/* ===== Utils ===== */
+/* ======= Config (adjust if your CSV lives in a folder) ======= */
+const DATA_CANDIDATES = ['geonames_10k.csv', 'data/geonames_10k.csv'];
+
+/* ======= Utilities ======= */
 function haversineKm(lat1,lon1,lat2,lon2){
   const R=6371, toRad=d=>d*Math.PI/180;
   const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
@@ -133,55 +136,45 @@ function haversineKm(lat1,lon1,lat2,lon2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 function fmtKm(km){ if(km<1) return `${(km*1000).toFixed(0)} m`; if(km<100) return `${km.toFixed(1)} km`; return `${Math.round(km)} km`; }
-function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function stripDiacritics(s){ return s.normalize('NFD').replace(/\p{Diacritic}/gu,''); }
+const WORLD_VIEW={center:[20,0],zoom:2};
 
-/* ===== Map ===== */
+/* ======= Map ======= */
 const map=L.map('map',{minZoom:1.5,worldCopyJump:true,attributionControl:true}).setView([20,0],2);
 const baseNoLabels=L.tileLayer('https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
 const labelsOverlay=L.tileLayer('https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',{attribution:''});
 map.setMaxBounds([[-85,-200],[85,200]]);
-const WORLD_VIEW={center:[20,0],zoom:2};
 
-/* ===== State ===== */
-let adminMap={}, allCities=[], roundCities=[], currentIndex=-1;
-let guesses=[];
-let provisional=null; // {lat,lon,marker}
-let actionMode='confirm';
+/* ======= State ======= */
+let adminMap={}, allCities=[], roundCities=[], currentIndex=-1, guesses=[];
+let provisional=null, actionMode='confirm';
+let feedbackLayers=[], resultLayers=[];
 
 const currentCityTopEl=document.getElementById('currentCityTop');
 const confirmBtn=document.getElementById('confirmBtn');
 const controlsSection=document.getElementById('controlsSection');
 const wikiSide=document.getElementById('wikiSide');
-
 const guessedCountEl=document.getElementById('guessedCount');
 const remainingCountEl=document.getElementById('remainingCount');
 
-let feedbackLayers=[]; let resultLayers=[];
-
-/* ===== Wikipedia multistep chooser (no hard bans) ===== */
+/* ======= Wikipedia (multistep; unchanged in spirit) ======= */
 const WIKI_TIMEOUT_MS=5000;
 const wikiCache=new Map();
 function cityKey(c){ return `${c.name}||${c.sub||''}||${c.country||''}`; }
-
-function abortableFetch(url,opts={},timeoutMs=WIKI_TIMEOUT_MS){
-  const c=new AbortController(); const id=setTimeout(()=>c.abort(),timeoutMs);
+function abortableFetch(url,opts={},t=WIKI_TIMEOUT_MS){
+  const c=new AbortController(); const id=setTimeout(()=>c.abort(),t);
   return fetch(url,{...opts,signal:c.signal}).finally(()=>clearTimeout(id));
 }
 async function mwApi(params){
   const qs=new URLSearchParams({...params,format:'json',origin:'*'});
   const r=await abortableFetch(`https://en.wikipedia.org/w/api.php?${qs.toString()}`);
-  if(!r.ok) throw new Error('Wikipedia API error');
-  return r.json();
+  if(!r.ok) throw new Error('Wikipedia API error'); return r.json();
 }
 async function restSummary(title){
   const slug=encodeURIComponent(title.replace(/\s+/g,'_'));
   const r=await abortableFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}?redirect=true`);
-  if(!r.ok) throw new Error('REST summary error');
-  return r.json();
+  if(!r.ok) throw new Error('REST summary error'); return r.json();
 }
-function pageCoord(p){ const c=Array.isArray(p.coordinates)?p.coordinates[0]:null; return c?{lat:c.lat,lon:c.lon}:null; }
-function distanceToCityKm(city,p){ const pc=pageCoord(p); return pc? haversineKm(city.lat,city.lon,pc.lat,pc.lon) : Infinity; }
 function typeScore(desc=''){
   const d=(desc||'').toLowerCase();
   if(d.includes('capital city')) return 50;
@@ -197,121 +190,59 @@ function typeScore(desc=''){
 }
 function titleScore(cityName,title){
   const n=(cityName||'').toLowerCase(), t=(title||'').toLowerCase();
-  if(t===n) return 100;
-  if(t.startsWith(n+',') || t.startsWith(n+' ')) return 90;
-  if(t.includes(n)) return 60;
-  return 0;
+  if(t===n) return 100; if(t.startsWith(n+',') || t.startsWith(n+' ')) return 90; if(t.includes(n)) return 60; return 0;
 }
 function distScoreKm(dKm){ return Math.max(0,30 - Math.min(30,dKm)); }
-function tolKmFor(city){
-  const p = city.pop || 0;
-  if(p>=1_000_000) return 18;
-  if(p>=100_000) return 12;
-  return 8;
-}
-
+function tolKmFor(city){ const p=city.pop||0; if(p>=1_000_000) return 18; if(p>=100_000) return 12; return 8; }
+function pageCoord(p){ const c=Array.isArray(p.coordinates)?p.coordinates[0]:null; return c?{lat:c.lat,lon:c.lon}:null; }
+function distanceToCityKm(city,p){ const pc=pageCoord(p); return pc? haversineKm(city.lat,city.lon,pc.lat,pc.lon) : Infinity; }
 async function fetchPagesInfoByTitles(titles){
-  if(!titles.length) return [];
-  const info=await mwApi({
-    action:'query',
-    prop:'coordinates|description|pageimages|info',
-    piprop:'thumbnail|original', pithumbsize:640,
-    inprop:'url',
+  if(!titles.length) return []; const info=await mwApi({
+    action:'query',prop:'coordinates|description|pageimages|info',piprop:'thumbnail|original',pithumbsize:640,inprop:'url',
     titles:Array.from(new Set(titles)).slice(0,40).join('|')
-  });
-  return Object.values(info.query?.pages || {});
+  }); return Object.values(info.query?.pages||{});
 }
-
 async function tryExactTitle(city, rawTitle){
-  const info=await fetchPagesInfoByTitles([rawTitle]);
-  const p=info[0];
-  if(!p) return null;
-  const d=distanceToCityKm(city,p);
-  if(d<=tolKmFor(city)) return p;
-  // quick ASCII variant if the exact had diacritics mismatch
-  const ascii = stripDiacritics(rawTitle);
+  const info=await fetchPagesInfoByTitles([rawTitle]); const p=info[0]; if(!p) return null;
+  if(distanceToCityKm(city,p)<=tolKmFor(city)) return p;
+  const ascii=stripDiacritics(rawTitle);
   if(ascii && ascii!==rawTitle){
-    const info2=await fetchPagesInfoByTitles([ascii]);
-    const p2=info2[0]; if(p2 && distanceToCityKm(city,p2)<=tolKmFor(city)) return p2;
-  }
-  return null;
+    const info2=await fetchPagesInfoByTitles([ascii]); const p2=info2[0];
+    if(p2 && distanceToCityKm(city,p2)<=tolKmFor(city)) return p2;
+  } return null;
 }
-
 async function searchTitles(city, query){
   const s=await mwApi({action:'query',list:'search',srsearch:query,srlimit:10,srprop:''});
-  const titles=(s.query?.search||[]).map(x=>x.title);
-  if(!titles.length) return null;
-  const pages=await fetchPagesInfoByTitles(titles);
-  let best=null,bestScore=-Infinity;
-  for(const p of pages){
-    const dKm=distanceToCityKm(city,p);
-    const score = titleScore(city.name,p.title) + typeScore(p.description||'') + distScoreKm(dKm);
-    if(score>bestScore){ bestScore=score; best=p; }
-  }
-  return best;
+  const titles=(s.query?.search||[]).map(x=>x.title); if(!titles.length) return null;
+  const pages=await fetchPagesInfoByTitles(titles); let best=null,bestScore=-Infinity;
+  for(const p of pages){ const dKm=distanceToCityKm(city,p);
+    const score=titleScore(city.name,p.title)+typeScore(p.description||'')+distScoreKm(dKm);
+    if(score>bestScore){bestScore=score;best=p;}
+  } return best;
 }
-
 async function geoSearchBest(city){
   const radii=[5000,10000,20000,30000];
   for(const r of radii){
     const geo=await mwApi({action:'query',list:'geosearch',gscoord:`${city.lat}|${city.lon}`,gsradius:r,gslimit:20,gsnamespace:0});
-    const titles=(geo.query?.geosearch||[]).map(g=>g.title);
-    if(!titles.length) continue;
-    const pages=await fetchPagesInfoByTitles(titles);
-    let best=null,bestScore=-Infinity;
-    for(const p of pages){
-      const dKm=distanceToCityKm(city,p);
-      const score = typeScore(p.description||'') + distScoreKm(dKm) + titleScore(city.name,p.title);
-      if(score>bestScore){ bestScore=score; best=p; }
-    }
-    if(best) return best;
-  }
-  return null;
+    const titles=(geo.query?.geosearch||[]).map(g=>g.title); if(!titles.length) continue;
+    const pages=await fetchPagesInfoByTitles(titles); let best=null,bestScore=-Infinity;
+    for(const p of pages){ const dKm=distanceToCityKm(city,p);
+      const score=typeScore(p.description||'')+distScoreKm(dKm)+titleScore(city.name,p.title);
+      if(score>bestScore){bestScore=score;best=p;}
+    } if(best) return best;
+  } return null;
 }
-
 async function chooseBestWiki(city){
-  const baseName = city.name;
-  const tol = tolKmFor(city);
-
-  // Step 1: exact title (city name only)
-  try{
-    const p = await tryExactTitle(city, baseName);
-    if(p) return p;
-  }catch(e){}
-
-  // Step 2: disambiguators
-  const disambigs = [`${baseName} (city)`, `${baseName} (town)`, `${baseName} City`];
-  for(const t of disambigs){
-    try{ const p=await tryExactTitle(city,t); if(p) return p; }catch(e){}
-  }
-
-  // Step 3: title-only search
-  try{
-    const p = await searchTitles(city, `intitle:"${baseName}"`);
-    if(p && distanceToCityKm(city,p) <= 30) return p;
-  }catch(e){}
-
-  // Step 4: hints with subdivision/country
-  const hints=[];
-  if(city.sub) hints.push(`intitle:"${baseName}, ${city.sub}"`);
-  if(city.country) hints.push(`intitle:"${baseName}, ${city.country}"`);
-  if(city.country) hints.push(`intitle:"${baseName} ${city.country}"`);
-  for(const q of hints){
-    try{
-      const p = await searchTitles(city, q);
-      if(p && distanceToCityKm(city,p) <= 30) return p;
-    }catch(e){}
-  }
-
-  // Step 5: coordinate fallback
-  try{
-    const p = await geoSearchBest(city);
-    if(p) return p;
-  }catch(e){}
-
+  const base=city.name;
+  try{ const p=await tryExactTitle(city,base); if(p) return p; }catch(e){}
+  for(const t of [`${base} (city)`,`${base} (town)`,`${base} City`]){ try{ const p=await tryExactTitle(city,t); if(p) return p; }catch(e){} }
+  try{ const p=await searchTitles(city,`intitle:"${base}"`); if(p && distanceToCityKm(city,p)<=30) return p; }catch(e){}
+  const hints=[]; if(city.sub) hints.push(`intitle:"${base}, ${city.sub}"`);
+  if(city.country) hints.push(`intitle:"${base}, ${city.country}"`,`intitle:"${base} ${city.country}"`);
+  for(const q of hints){ try{ const p=await searchTitles(city,q); if(p && distanceToCityKm(city,p)<=30) return p; }catch(e){} }
+  try{ const p=await geoSearchBest(city); if(p) return p; }catch(e){}
   return null;
 }
-
 async function showWikipediaPanel(city){
   const wikiTitle=document.getElementById('wikiTitle');
   const wikiExtract=document.getElementById('wikiExtract');
@@ -319,76 +250,69 @@ async function showWikipediaPanel(city){
   const wikiActions=document.getElementById('wikiActions');
   const wikiImg=document.getElementById('wikiImg');
 
-  // Immediate loading state
-  wikiTitle.textContent = cityLabel(city);
+  wikiTitle.textContent = city.sub ? `${city.name} — ${city.sub}` : city.name;
   wikiExtract.textContent = 'Loading…';
-  wikiImg.style.display='none'; wikiImg.removeAttribute('src');
-  wikiActions.style.display='none';
+  wikiImg.style.display='none'; wikiImg.removeAttribute('src'); wikiActions.style.display='none';
 
-  const key = cityKey(city);
+  const key=cityKey(city);
   if(wikiCache.has(key)){
-    const info = wikiCache.get(key);
-    wikiTitle.textContent = info.title || cityLabel(city);
-    wikiExtract.textContent = info.extract || 'No summary available.';
-    if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; } else { wikiImg.style.display='none'; wikiImg.removeAttribute('src'); }
-    if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; } else { wikiActions.style.display='none'; }
+    const info=wikiCache.get(key);
+    wikiTitle.textContent=info.title||wikiTitle.textContent;
+    wikiExtract.textContent=info.extract||'No summary available.';
+    if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; }
+    if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; }
     return;
   }
-
   try{
-    const best = await chooseBestWiki(city);
+    const best=await chooseBestWiki(city);
     if(best){
-      // REST summary for clean text + image
-      let title = best.title;
       try{
-        const d = await restSummary(best.title);
-        title = d.title || best.title;
-        const extract = d.extract || best.description || 'No summary available.';
-        const imgSrc = d.originalimage?.source || d.thumbnail?.source || null;
-        const pageUrl = d.content_urls?.desktop?.page || best.fullurl || null;
-        wikiCache.set(key,{title,extract,imgSrc,pageUrl});
-      }catch(err){
-        const extract = best.description || 'No summary available.';
-        const imgSrc = (best.original && best.original.source) || (best.thumbnail && best.thumbnail.source) || null;
-        const pageUrl = best.fullurl || null;
-        wikiCache.set(key,{title,extract,imgSrc,pageUrl});
+        const d=await restSummary(best.title);
+        wikiCache.set(key,{
+          title:d.title||best.title,
+          extract:d.extract||best.description||'No summary available.',
+          imgSrc:d.originalimage?.source || d.thumbnail?.source || null,
+          pageUrl:d.content_urls?.desktop?.page || best.fullurl || null
+        });
+      }catch(e){
+        wikiCache.set(key,{
+          title:best.title,
+          extract:best.description || 'No summary available.',
+          imgSrc:(best.original&&best.original.source) || (best.thumbnail&&best.thumbnail.source) || null,
+          pageUrl:best.fullurl || null
+        });
       }
     }else{
-      wikiCache.set(key,{title: cityLabel(city), extract:'No summary found on Wikipedia.', imgSrc:null, pageUrl:null});
+      wikiCache.set(key,{title:city.name,extract:'No summary found on Wikipedia.',imgSrc:null,pageUrl:null});
     }
-
-    const info = wikiCache.get(key);
-    wikiTitle.textContent = info.title || cityLabel(city);
-    wikiExtract.textContent = info.extract || 'No summary available.';
-    if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; } else { wikiImg.style.display='none'; wikiImg.removeAttribute('src'); }
-    if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; } else { wikiActions.style.display='none'; }
+    const info=wikiCache.get(key);
+    wikiTitle.textContent=info.title||wikiTitle.textContent;
+    wikiExtract.textContent=info.extract||'No summary available.';
+    if(info.imgSrc){ wikiImg.src=info.imgSrc; wikiImg.style.display='block'; }
+    if(info.pageUrl){ wikiLink.href=info.pageUrl; wikiActions.style.display='flex'; }
   }catch(e){
-    wikiTitle.textContent = cityLabel(city);
-    wikiExtract.textContent = 'No summary found on Wikipedia.';
-    wikiImg.style.display='none'; wikiImg.removeAttribute('src');
-    wikiActions.style.display='none';
+    wikiTitle.textContent=city.sub ? `${city.name} — ${city.sub}` : city.name;
+    wikiExtract.textContent='No summary found on Wikipedia.'; wikiImg.style.display='none'; wikiActions.style.display='none';
   }
 }
 
-/* ===== UI helpers ===== */
+/* ======= UI helpers ======= */
+function cityLabel(c){ return c.sub ? `${c.name} — ${c.sub}` : c.name; }
 function setTopCity(cityObj){ currentCityTopEl.innerHTML = cityObj ? `<span class="cty">${cityObj.name}</span>${cityObj.sub?` <span class="sub">— ${cityObj.sub}</span>`:''}` : ''; }
 function setTopDistance(km){ currentCityTopEl.innerHTML = `<span class="cty">${fmtKm(km)} away</span>`; }
 function setTopRoundSummary(){ currentCityTopEl.innerHTML = `<span class="cty">Round summary</span>`; }
 function updateScoreBox(){ guessedCountEl.textContent=guesses.length; remainingCountEl.textContent=Math.max(0, roundCities.length - guesses.length); }
-
-/* ===== Show/hide side panel ===== */
 function showFeedbackUI(){ controlsSection.style.display='none'; wikiSide.classList.add('open'); }
 function hideFeedbackUI(){ controlsSection.style.display=''; wikiSide.classList.remove('open'); }
 
-/* ===== Map helpers ===== */
+/* ======= Map helpers ======= */
 function resetMapView(){
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
-  clearFeedbackLayers();
+  feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
   if(provisional && provisional.marker) map.removeLayer(provisional.marker);
   provisional=null;
   map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom, {animate:true});
 }
-function clearFeedbackLayers(){ feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[]; }
 function fitToAllGuesses(){
   const pts=[]; guesses.forEach(g=>{ pts.push([g.trueLat,g.trueLon],[g.guessLat,g.guessLon]); });
   if(pts.length){ map.fitBounds(L.latLngBounds(pts).pad(0.2)); } else { resetMapView(); }
@@ -406,7 +330,7 @@ function drawResultsLayers(){
   });
 }
 
-/* ===== Provisional pin ===== */
+/* ======= Provisional pin ======= */
 map.on('click',(e)=>{
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   if(actionMode!=='confirm') return;
@@ -420,7 +344,7 @@ map.on('click',(e)=>{
   }
 });
 
-/* ===== Game flow ===== */
+/* ======= Game flow ======= */
 function startRound(){
   if(!allCities.length){ alert('Dataset not loaded yet.'); return; }
   const num=Math.max(1,Math.min(parseInt(document.getElementById('numPerRound').value||'10',10),200));
@@ -431,9 +355,9 @@ function startRound(){
   const pool=allCities.filter(c=>(c.pop??0)>=minPop);
   if(pool.length<num){ alert(`Only ${pool.length} cities at ≥ ${minPop.toLocaleString()} pop. Reduce number per round or choose an easier level.`); return; }
 
+  // Fisher–Yates shuffle
   const idx=[...pool.keys()];
-  for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j]], [idx[j]]=[idx[i]]; } // shuffle
-  for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; } // (fix typo)
+  for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
   roundCities=idx.slice(0,num).map(i=>pool[i]);
 
   clearResultLayers(); guesses=[]; currentIndex=-1; updateScoreBox();
@@ -447,15 +371,13 @@ function nextCity(){
   const city=roundCities[currentIndex]; setTopCity(city); updateScoreBox();
 }
 
-/* ===== Confirm / Next / Results / Restart ===== */
-async function confirmOrNext(){
+/* ======= Confirm / Next / Results / Restart ======= */
+confirmBtn.addEventListener('click', async ()=>{
   if(actionMode==='next'){ nextCity(); return; }
   if(actionMode==='results'){ showRoundResults(); return; }
   if(actionMode==='restart'){ startRound(); return; }
   await confirmGuess();
-}
-confirmBtn.addEventListener('click', confirmOrNext);
-
+});
 async function confirmGuess(){
   if(currentIndex<0 || currentIndex>=roundCities.length) return;
   const c=roundCities[currentIndex];
@@ -468,28 +390,26 @@ async function confirmGuess(){
   guesses.push({city:c,guessLat,guessLon,trueLat,trueLon,distKm:dKm}); updateScoreBox();
   if(provisional.marker) map.removeLayer(provisional.marker);
 
-  const guessMarker=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
+  const gm=L.circleMarker([guessLat,guessLon],{radius:6,weight:2,color:'#6aa0ff',fillColor:'#6aa0ff',fillOpacity:0.4})
     .bindTooltip(`Your guess<br>${fmtKm(dKm)} away`,{direction:'top'}).addTo(map);
-  const trueMarker=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
+  const tm=L.circleMarker([trueLat,trueLon],{radius:6,weight:2,color:'#22c55e',fillColor:'#22c55e',fillOpacity:0.5})
     .bindTooltip(`${cityLabel(c)}<br>True location`,{direction:'top'}).addTo(map);
-  const line=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
-  feedbackLayers.push(guessMarker,trueMarker,line);
+  const ln=L.polyline([[guessLat,guessLon],[trueLat,trueLon]],{weight:2,color:'#f59e0b',opacity:.9,dashArray:'4,4'}).addTo(map);
+  feedbackLayers.push(gm,tm,ln);
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   map.setView([trueLat,trueLon],9,{animate:true});
 
   setTopDistance(dKm);
   showFeedbackUI();
-  showWikipediaPanel(c); // multistep chooser runs AFTER confirm
+  showWikipediaPanel(c);
 
   const isLast=(currentIndex===roundCities.length-1);
   actionMode=isLast?'results':'next';
   confirmBtn.textContent=isLast?'See results':'Next city';
 }
-
-/* ===== Results ===== */
 function showRoundResults(){
   hideFeedbackUI();
-  clearFeedbackLayers();
+  feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
   if(!map.hasLayer(labelsOverlay)) labelsOverlay.addTo(map);
   drawResultsLayers();
   fitToAllGuesses();
@@ -498,65 +418,170 @@ function showRoundResults(){
   confirmBtn.textContent='Start new round';
 }
 
-/* ===== Data loading ===== */
+/* ======= Data loading (robust) ======= */
 function normalizeHeader(h){ return (h||'').toString().replace(/^\uFEFF/,'').trim(); }
+function looksLikeHTML(text){ return /^\s*<!doctype html>|^\s*<html/i.test(text); }
+
 function parseAdmin1(text){
   const map={}; text.split(/\r?\n/).forEach(line=>{
     if(!line || !line.includes('\t')) return;
-    const [key,name]=line.split('\t');
-    if(key && name) map[key.trim()]=name.trim();
+    const [key,name]=line.split('\t'); if(key && name) map[key.trim()]=name.trim();
   }); return map;
 }
+
+/* Flexible column detection */
+function detectColumns(headers){
+  const H=headers.map(h=>normalizeHeader(h));
+  const nameKeys = [/^name$/i,/^ascii\s*name$/i,/^city$/i,/^placename$/i];
+  const latKeys  = [/^lat$/i,/^latitude$/i,/^lat\s*\(deg\)$/i,/^y$/i];
+  const lonKeys  = [/^lon$/i,/^long$/i,/^lng$/i,/^longitude$/i,/^x$/i];
+
+  function findKey(regexes){
+    for(const rx of regexes){
+      const i = H.findIndex(h=>rx.test(h));
+      if(i!==-1) return H[i];
+    }
+    return null;
+  }
+  return {
+    nameKey: findKey(nameKeys),
+    latKey:  findKey(latKeys),
+    lonKey:  findKey(lonKeys)
+  };
+}
+
 function extractSubdivision(row){
-  const cc=(row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
-  const a1=(row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
-  if(cc && a1){ const k=`${cc}.${a1}`; if(adminMap[k]) return adminMap[k]; }
-  const labelEn=row['LABEL EN'] ?? null;
+  const cc = (row['Country Code'] ?? row['Country code'] ?? row['CC'] ?? '').toString().trim();
+  const a1 = (row['Admin1 Code'] ?? row['Admin1'] ?? '').toString().trim();
+  if(cc && a1){
+    const key = `${cc}.${a1}`;
+    if(adminMap[key]) return adminMap[key];
+  }
+  const labelEn = row['LABEL EN'] ?? null;
   if(labelEn){
-    const parts=labelEn.split(',').map(s=>s.trim()).filter(Boolean);
-    if(parts.length>=3){ const penultimate=parts[parts.length-2]; return penultimate || null; }
+    const parts = labelEn.split(',').map(s=>s.trim()).filter(Boolean);
+    if(parts.length >= 3){
+      const penultimate = parts[parts.length-2];
+      return penultimate || null;
+    }
   }
   return null;
 }
+
 function parseRowsToCities(rows){
   const out=[];
   for(const r of rows){
-    const name=(r.name ?? r.city ?? r.City ?? r.Name ?? r['ASCII Name'] ?? '').toString().trim();
+    const keys = Object.keys(r);
+    if(!keys.length) continue;
+
+    // Pull likely fields by scanning keys each row (handles occasional column label drift)
+    const lower = {}; for(const k of keys){ lower[normalizeHeader(k).toLowerCase()] = k; }
+
+    const name = (r[lower['name']] ?? r[lower['ascii name']] ?? r[lower['city']] ?? r[lower['placename']] ?? '').toString().trim();
     if(!name) continue;
-    const popNum=parseInt(r.Population ?? r.population ?? r.pop ?? r['Population '],10);
-    const latNum=parseFloat(r.lat ?? r.latitude ?? r.Lat ?? r.Latitude);
-    const lonNum=parseFloat(r.lon ?? r.lng ?? r.long ?? r.longitude ?? r.Lon ?? r.Longitude);
-    if(!isFinite(latNum)||!isFinite(lonNum)) continue;
-    const sub=extractSubdivision(r);
-    const country=(r['Country name EN'] ?? '').toString().trim() || null;
-    out.push({name,lat:latNum,lon:lonNum,pop:Number.isFinite(popNum)?popNum:null,sub,country});
+
+    // latitude
+    let latRaw = r[lower['lat']] ?? r[lower['latitude']] ?? r[lower['lat (deg)']] ?? r[lower['y']];
+    // longitude
+    let lonRaw = r[lower['lon']] ?? r[lower['long']] ?? r[lower['lng']] ?? r[lower['longitude']] ?? r[lower['x']];
+
+    // Try "Coordinates" fallback if needed
+    if((latRaw==null || lonRaw==null) && (r['Coordinates']!=null || r['Coordinates ']!=null)){
+      const coordStr = (r['Coordinates'] ?? r['Coordinates ']).toString();
+      const parts = coordStr.split(',',2); if(parts.length===2){ latRaw=parts[0].trim(); lonRaw=parts[1].trim(); }
+    }
+
+    const lat = parseFloat(String(latRaw).replace(',','.'));
+    const lon = parseFloat(String(lonRaw).replace(',','.'));
+    if(!isFinite(lat) || !isFinite(lon)) continue;
+    if(lat<-90 || lat>90 || lon<-180 || lon>180) continue;
+
+    // population (optional)
+    const popRaw = r['Population'] ?? r['population'] ?? r['pop'] ?? r['Population '] ?? r['POP'] ?? null;
+    const pop = Number.isFinite(parseInt(popRaw,10)) ? parseInt(popRaw,10) : null;
+
+    const sub = extractSubdivision(r);
+    const country = (r['Country name EN'] ?? r['Country'] ?? r['Country Name'] ?? r['country'] ?? '').toString().trim() || null;
+
+    out.push({ name, lat, lon, pop, sub, country });
   }
   return out;
 }
-function loadCSV(url){
+
+async function loadAdmin(){
+  try{
+    const resp = await fetch('admin1CodesASCII.txt');
+    if(resp.ok){ adminMap = parseAdmin1(await resp.text()); }
+  }catch(e){ console.warn('Admin1 not loaded (ok):', e); }
+}
+
+function tryParseCSV(url, resolve, reject){
   Papa.parse(url,{
     download:true, header:true, skipEmptyLines:true, transformHeader: normalizeHeader,
-    complete: (res)=>{
-      const cities=parseRowsToCities(res.data);
-      if(!cities.length){ alert('No valid rows found in geonames_10k.csv'); return; }
-      allCities=cities; startRound();
+    complete: function(res){
+      try{
+        const text = res?.data && res.data.length ? null : res?.meta?.cursor; // not reliable; we double-check via fetch below when needed
+        const fields = res.meta?.fields || [];
+        if(!fields.length){
+          // Papa might have parsed an empty/HTML file; fetch raw to confirm
+          fetch(url).then(r=>r.text()).then(t=>{
+            if(looksLikeHTML(t)){ reject(new Error(`Fetched HTML instead of CSV from "${url}". Is the file path correct?`)); }
+            else reject(new Error(`No header row detected in "${url}".`));
+          }).catch(()=>reject(new Error(`Could not load "${url}".`)));
+          return;
+        }
+
+        console.log('[CSV] Detected headers:', fields);
+        if(res.data && res.data.length) console.log('[CSV] Sample row:', res.data[0]);
+
+        const cities = parseRowsToCities(res.data);
+        if(!cities.length){
+          reject(new Error(`No valid rows found in "${url}". Check that it’s a real CSV with name/lat/lon columns.`));
+          return;
+        }
+        resolve(cities);
+      }catch(err){
+        reject(err);
+      }
     },
-    error: (err)=>{ console.error(err); alert('Error loading dataset.'); }
+    error: function(err){ reject(err); }
   });
 }
+
+async function loadCSVWithFallbacks(){
+  let lastErr=null;
+  for(const url of DATA_CANDIDATES){
+    try{
+      const cities = await new Promise((resolve,reject)=>tryParseCSV(url, resolve, reject));
+      return {url, cities};
+    }catch(e){
+      console.warn(`[CSV] Failed "${url}":`, e);
+      lastErr=e;
+    }
+  }
+  throw lastErr || new Error('Failed to load any CSV candidate.');
+}
+
+/* ======= Boot ======= */
 async function boot(){
+  await loadAdmin();
   try{
-    const resp=await fetch('admin1CodesASCII.txt');
-    if(resp.ok){ adminMap=parseAdmin1(await resp.text()); }
-  }catch(e){}
-  loadCSV('geonames_10k.csv');
+    const {url, cities} = await loadCSVWithFallbacks();
+    console.log(`[CSV] Loaded from: ${url} — ${cities.length} cities`);
+    allCities = cities;
+    startRound(); // auto-start
+  }catch(e){
+    console.error(e);
+    alert(e.message + '\n\nTips:\n• Ensure geonames_10k.csv is at the site root (or in /data/).\n• If using GitHub Pages, confirm the exact path and that the file is actually being served as CSV (not a 404 HTML).');
+  }
 }
 window.addEventListener('DOMContentLoaded', boot);
 
-/* ===== Controls ===== */
+/* ======= Controls ======= */
 document.getElementById('startBtn').addEventListener('click', startRound);
 document.getElementById('resetBtn').addEventListener('click', ()=>{
-  clearFeedbackLayers(); clearResultLayers();
+  feedbackLayers.forEach(l=>map.removeLayer(l)); feedbackLayers=[];
+  clearResultLayers();
   if(map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay);
   resetMapView();
 });
